@@ -2889,6 +2889,11 @@ function metricLabel(m) {
   return { semester_score:'學期成績', midterm:'期中考', final:'期末考' }[m] || m;
 }
 
+// Maps dMetric key → actual field name in class_summary
+function metricField(m) {
+  return { semester_score:'avg_semester', midterm:'avg_midterm', final:'avg_final' }[m] || m;
+}
+
 function renderD() {
   if (!DATA) return;
 
@@ -2984,7 +2989,7 @@ function renderDTrendMerge(filtered, sems) {
     const data = sems.map(sem => {
       const cls = filtered.filter(c => c.semester === sem && c.program === prog);
       if (!cls.length) return null;
-      const vals = cls.map(c => c[dMetric]).filter(v => v != null);
+      const vals = cls.map(c => c[metricField(dMetric)]).filter(v => v != null);
       return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : null;
     });
     return {
@@ -3031,7 +3036,7 @@ function renderDTrendClass(filtered, sems) {
     const prog = filtered.find(c => c.sheet_name === cls)?.program || '2yr_gen';
     const data = sems.map(sem => {
       const rec = filtered.find(c => c.semester === sem && c.sheet_name === cls);
-      return rec ? (rec[dMetric] ?? null) : null;
+      return rec ? (rec[metricField(dMetric)] ?? null) : null;
     });
     return {
       label: cls,
@@ -3072,7 +3077,7 @@ function renderDProgramBar(allClasses, sems, filterProg) {
     const data = sems.map(sem => {
       const cls = allClasses.filter(c => c.semester === sem && c.program === prog);
       if (!cls.length) return null;
-      const vals = cls.map(c => c[dMetric]).filter(v => v != null);
+      const vals = cls.map(c => c[metricField(dMetric)]).filter(v => v != null);
       return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
     });
     return {
