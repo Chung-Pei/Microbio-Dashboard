@@ -741,12 +741,13 @@ body.light .year-range-badge {
   font-weight: 700;
   white-space: nowrap;
 }
-.prog-2yr-gen   { background: rgba(79,142,247,0.15); color: #4f8ef7; }
-.prog-2yr-work  { background: rgba(100,212,168,0.15); color: #64d4a8; }
-.prog-2yr-night { background: rgba(247,164,79,0.15); color: #f7a44f; }
-.prog-4yr       { background: rgba(224,108,140,0.15); color: #e06c8c; }
-.prog-post      { background: rgba(190,120,240,0.15); color: #be78f0; }
-.prog-summer    { background: rgba(240,200,91,0.15); color: #f0c85b; }
+.prog-2yr-gen      { background: rgba(79,142,247,0.15); color: #4f8ef7; }
+.prog-2yr-work     { background: rgba(100,212,168,0.15); color: #64d4a8; }
+.prog-2yr-night    { background: rgba(247,164,79,0.15); color: #f7a44f; }
+.prog-4yr          { background: rgba(224,108,140,0.15); color: #e06c8c; }
+.prog-post         { background: rgba(190,120,240,0.15); color: #be78f0; }
+.prog-retake-class  { background: rgba(240,200,91,0.15); color: #f0c85b; }
+.prog-retake-student{ background: rgba(160,176,192,0.15); color: #a0b0c0; }
 
 /* ── 頁籤 D 整屆圖表 ── */
 #panelD .view-toggle {
@@ -775,7 +776,7 @@ body.light .year-range-badge {
 <header>
   <div class="logo">LA<span>/</span>DASH</div>
   <div class="header-sep"></div>
-  <div class="header-title">北護微免學學習數據追蹤系統</div>
+  <div class="header-title">北護微免學學習分析儀表板</div>
   <span class="year-range-badge" id="yearRangeBadge">—</span>
   <div class="header-meta" id="metaInfo">載入中...</div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深/淺色模式">🌙</button>
@@ -817,7 +818,6 @@ body.light .year-range-badge {
       <option value="all">全部 All</option>
       <option value="theory">正課 Theory</option>
       <option value="practicum">實驗 Practicum</option>
-      <option value="summer">暑期 Summer</option>
     </select>
   </div>
 
@@ -1034,12 +1034,19 @@ body.light .year-range-badge {
     <select id="dFilterProgram" onchange="renderD()">
       <option value="all">全部學制 All</option>
       <option value="2yr_gen">二技一般班</option>
-      <option value="2yr_work">二技在職一般</option>
-      <option value="2yr_night">二技在職夜間</option>
+      <option value="2yr_work">二技在職</option>
+      <option value="2yr_night">二技夜間</option>
       <option value="4yr">四技</option>
       <option value="post">學士後護理</option>
-      <option value="summer">暑期學分</option>
+      <option value="retake_class">重修班</option>
+      <option value="retake_student">重修生</option>
     </select>
+    <div class="filter-sep"></div>
+    <span class="filter-label">課程類型 Type</span>
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="dTypeTheory" onclick="setDType('theory')">正課</button>
+      <button class="mode-btn" id="dTypePracticum" onclick="setDType('practicum')">實驗課</button>
+    </div>
     <div class="filter-sep"></div>
     <span class="filter-label">顯示模式 View</span>
     <div class="view-toggle">
@@ -1062,11 +1069,12 @@ body.light .year-range-badge {
   <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center">
     <span style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em">學制圖例</span>
     <span class="program-badge prog-2yr-gen">二技一般</span>
-    <span class="program-badge prog-2yr-work">二技在職一般</span>
-    <span class="program-badge prog-2yr-night">二技在職夜間</span>
+    <span class="program-badge prog-2yr-work">二技在職</span>
+    <span class="program-badge prog-2yr-night">二技夜間</span>
     <span class="program-badge prog-4yr">四技</span>
     <span class="program-badge prog-post">學士後護理</span>
-    <span class="program-badge prog-summer">暑期學分</span>
+    <span class="program-badge prog-retake-class">重修班</span>
+    <span class="program-badge prog-retake-student">重修生</span>
   </div>
 
   <!-- 跨屆趨勢折線圖 -->
@@ -1177,6 +1185,7 @@ let DATA = null;
 let bMode = 'sheet';
 let dView   = 'merge';
 let dMetric = 'semester_score';
+let dType   = 'theory';  // 'theory' | 'practicum'
 
 // ══════════════════════════════════════════════════════════
 // 統一 Chart.js Tooltip 樣式
@@ -1295,9 +1304,8 @@ function hideSvgTip() {
 document.addEventListener('touchstart', e => {
   if (!e.target.closest('[data-svgtip]')) svgTip.style.display = 'none';
 }, { passive: true });
-document.addEventListener('mousemove', e => {
-  if (svgTip.style.display !== 'none') moveSvgTip(e);
-});
+// NOTE: 移除 document-level mousemove — 改由各 SVG 元素的 mousemove 處理定位，
+// 避免 tooltip 在滑鼠離開 SVG 後仍繼續跟隨。
 
 // ══════════════════════════════════════════════════════════
 // 圖表說明系統（info button + popover）
@@ -1595,8 +1603,17 @@ function addSvgTooltip(svgEl, selector, contentFn) {
     const html = contentFn(target);
     if (html) showSvgTip(e, html);
   });
-  svgEl.addEventListener('mousemove', moveSvgTip);
-  svgEl.addEventListener('mouseout',  e => {
+  // 在 SVG 內移動時更新定位
+  svgEl.addEventListener('mousemove', e => {
+    if (svgTip.style.display !== 'none') moveSvgTip(e);
+  });
+  // 滑鼠離開整個 SVG 容器 → 立即隱藏，不用計時器延遲
+  svgEl.addEventListener('mouseleave', () => {
+    clearTimeout(svgTipTimer);
+    svgTip.style.display = 'none';
+  });
+  // 移到非 tooltip 元素時隱藏（原有的 mouseout 邏輯，保留作補強）
+  svgEl.addEventListener('mouseout', e => {
     if (!e.target.closest(selector)) hideSvgTip();
   });
   // Touch
@@ -1655,6 +1672,22 @@ function semLabel(s) {
   return `${y} 學年 ${t==='1'?'上':'下'}學期`;
 }
 
+// 依規定學制順序排序程式碼 key
+function sortPrograms(progs) {
+  return [...progs].sort((a, b) =>
+    (PROGRAM_ORDER.indexOf(a) + 1 || 99) - (PROGRAM_ORDER.indexOf(b) + 1 || 99)
+  );
+}
+
+// 依規定學制順序排序班級名稱（先依學制，再依字母）
+function sortSheetNames(names) {
+  return [...names].sort((a, b) => {
+    const pa = classifyProgram(a, ''), pb = classifyProgram(b, '');
+    const oi = (PROGRAM_ORDER.indexOf(pa) + 1 || 99) - (PROGRAM_ORDER.indexOf(pb) + 1 || 99);
+    return oi !== 0 ? oi : a.localeCompare(b, 'zh-TW');
+  });
+}
+
 function populateFilters() {
   const sems = DATA.meta.semesters;
   // Panel A
@@ -1662,9 +1695,9 @@ function populateFilters() {
   aSem.innerHTML = sems.map(s => `<option value="${s}">${semLabel(s)}</option>`).join('');
 
   // Trend
-  const trendSheets = [...new Set(
+  const trendSheets = sortSheetNames([...new Set(
     Object.values(DATA.class_summary).map(c => c.sheet_name)
-  )].sort();
+  )]);
   const aTrend = document.getElementById('aTrendSheet');
   aTrend.innerHTML = trendSheets.map(s => `<option value="${s}">${s}</option>`).join('');
 
@@ -1674,9 +1707,11 @@ function populateFilters() {
 function updateSheetFilter() {
   const sem  = document.getElementById('aFilterSem').value;
   const type = document.getElementById('aFilterType').value;
-  const sheets = Object.values(DATA.class_summary)
-    .filter(c => c.semester === sem && (type === 'all' || c.type === type))
-    .map(c => c.sheet_name).sort();
+  const sheets = sortSheetNames(
+    Object.values(DATA.class_summary)
+      .filter(c => c.semester === sem && (type === 'all' || c.type === type))
+      .map(c => c.sheet_name)
+  );
 
   const el = document.getElementById('aFilterSheet');
   // 保留使用者目前選擇（如果仍存在於新清單中）
@@ -2475,7 +2510,7 @@ function renderDeltaByProgram() {
       progDeltas[p].push(r.delta);
     });
   });
-  const progs = Object.keys(PROGRAM_LABELS).filter(p=>progDeltas[p]?.length);
+  const progs = PROGRAM_ORDER.filter(p=>progDeltas[p]?.length);
   const avgs  = progs.map(p=>+(progDeltas[p].reduce((a,v)=>a+v,0)/progDeltas[p].length).toFixed(1));
 
   mkChart('chartDeltaByProgram',{
@@ -2567,7 +2602,7 @@ function renderFirstVsDelta() {
 function renderHeatmap(filtered) {
   const wrap = document.getElementById('heatmapWrap');
   const sems  = DATA.meta.semesters;
-  const classes = [...new Set(filtered.map(c=>c.sheet_name))].sort();
+  const classes = sortSheetNames([...new Set(filtered.map(c=>c.sheet_name))]);
   if (!classes.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
 
   const isDark = !document.body.classList.contains('light');
@@ -2625,7 +2660,7 @@ function renderHeatmap(filtered) {
 // D1: Box Plot（純 SVG）
 function renderBoxPlot(allClasses) {
   const wrap=document.getElementById('boxplotWrap');
-  const programs=Object.keys(PROGRAM_LABELS);
+  const programs=PROGRAM_ORDER;
 
   // 從 students 收集各學制的原始成績
   const progScores={};
@@ -2772,41 +2807,51 @@ function toggleTheme() {
 // ══════════════════════════════════════════════════════════
 function classifyProgram(sheetName, semester) {
   const s = sheetName.trim();
-  const semType = semester ? semester.slice(3) : '';  // '1' or '2'
 
-  if (/暑期/.test(s)) return 'summer';
-  if (/學後護/.test(s)) return 'post';
+  // 重修班（任務型開設，sheet_name 必含「重修」）
+  if (/重修/.test(s)) return 'retake_class';
 
-  // 下學期(2) → 四技
+  // 學士後護（含「學後護」「學士後」等多種寫法）
+  if (/學後護|學士後/.test(s)) return 'post';
+
+  // 四技：護41A-D 或 護四一A-D
+  if (/護4[1-9][A-Da-d]|護四[一二三四][A-Da-d]/.test(s)) return '4yr';
+
+  // 二技夜間：丙、丁班
+  if (/[丙丁]/.test(s)) return '2yr_night';
+
+  // 二技在職：甲、乙、戊、己班
+  if (/[甲乙戊己]/.test(s)) return '2yr_work';
+
+  // 二技一般：護21A-E 或 護二一A-E 或 N21A-E 或 日21A-E
+  if (/護2[1-9][A-Ea-e]|護二[一二][A-Ea-e]|N2[1-9][A-Ea-e]|日2[1-9][A-Ea-e]/i.test(s)) return '2yr_gen';
+
+  // fallback：仍用學期推斷（上學期→二技，下學期→四技）
+  const semType = semester ? semester.slice(-1) : '';
   if (semType === '2') return '4yr';
-
-  // 上學期(1) → 二技系列
-  // 中文班別判斷
-  if (/[丙丁]/.test(s)) return '2yr_night';   // 在職夜間
-  if (/[甲乙己]/.test(s)) return '2yr_work';   // 在職一般
-  if (/[戊]/.test(s)) return '2yr_work';        // 戊班也是在職
-
-  // 英文字母班 or 日+英文 → 二技一般
-  if (/[A-E]/.test(s)) return '2yr_gen';
-
-  return '2yr_gen'; // fallback
+  return '2yr_gen';
 }
 
+// 學制順序：二技一般 → 二技在職 → 二技夜間 → 四技一般 → 學士後護 → 重修班 → 重修生
+const PROGRAM_ORDER = ['2yr_gen','2yr_work','2yr_night','4yr','post','retake_class','retake_student'];
+
 const PROGRAM_LABELS = {
-  '2yr_gen':   '二技一般',
-  '2yr_work':  '二技在職一般',
-  '2yr_night': '二技在職夜間',
-  '4yr':       '四技',
-  'post':      '學士後護理',
-  'summer':    '暑期學分',
+  '2yr_gen':        '二技一般',
+  '2yr_work':       '二技在職',
+  '2yr_night':      '二技夜間',
+  '4yr':            '四技',
+  'post':           '學士後護理',
+  'retake_class':   '重修班',
+  'retake_student': '重修生',
 };
 const PROGRAM_COLORS = {
-  '2yr_gen':   '#4f8ef7',
-  '2yr_work':  '#64d4a8',
-  '2yr_night': '#f7a44f',
-  '4yr':       '#e06c8c',
-  'post':      '#be78f0',
-  'summer':    '#f0c85b',
+  '2yr_gen':        '#4f8ef7',
+  '2yr_work':       '#64d4a8',
+  '2yr_night':      '#f7a44f',
+  '4yr':            '#e06c8c',
+  'post':           '#be78f0',
+  'retake_class':   '#f0c85b',
+  'retake_student': '#a0b0c0',
 };
 
 // ══════════════════════════════════════════════════════════
@@ -2816,6 +2861,18 @@ function setDView(v) {
   dView = v;
   document.getElementById('dViewMerge').classList.toggle('active', v === 'merge');
   document.getElementById('dViewClass').classList.toggle('active', v === 'class');
+  renderD();
+}
+
+function setDType(t) {
+  dType = t;
+  document.getElementById('dTypeTheory').classList.toggle('active', t === 'theory');
+  document.getElementById('dTypePracticum').classList.toggle('active', t === 'practicum');
+  // 實驗課不支援期中/期末，強制切回學期成績
+  if (t === 'practicum' && dMetric !== 'semester_score') {
+    setDMetric('semester_score');
+    return;
+  }
   renderD();
 }
 
@@ -2838,11 +2895,15 @@ function renderD() {
   const filterProg = document.getElementById('dFilterProgram').value;
   const sems = DATA.meta.semesters;
 
-  // 從 class_summary 收集資料，加入 program 分類
+  // 正課 vs 實驗課：依 dType 過濾（比較基準一致）
+  // 正課 type 值為 'theory'（或 etl 產生的對應值），實驗課為 'practicum'
   const allClasses = Object.values(DATA.class_summary).map(c => ({
     ...c,
     program: classifyProgram(c.sheet_name, c.semester)
-  })).filter(c => c.type !== 'practicum'); // 整屆比較以正課/暑期為主
+  })).filter(c => {
+    if (dType === 'practicum') return c.type === 'practicum';
+    return c.type !== 'practicum'; // theory / summer / 重修班 均屬「非實驗」正課
+  });
 
   const filtered = filterProg === 'all'
     ? allClasses
@@ -2884,6 +2945,7 @@ function renderD() {
   // 更新圖表標題
   document.getElementById('dChartTitle').textContent =
     (filterProg === 'all' ? '全部學制' : PROGRAM_LABELS[filterProg]) +
+    '【' + (dType === 'practicum' ? '實驗課' : '正課') + '】' +
     ' — ' + metricLabel(dMetric) + ' 跨學期趨勢';
 
   // ── 折線圖：跨學期趨勢 ──
@@ -2916,7 +2978,7 @@ function renderD() {
 
 function renderDTrendMerge(filtered, sems) {
   // 合併模式：每個學制一條線，每學期取平均
-  const programs = [...new Set(filtered.map(c => c.program))].sort();
+  const programs = sortPrograms([...new Set(filtered.map(c => c.program))]);
 
   const datasets = programs.map(prog => {
     const data = sems.map(sem => {
@@ -2963,7 +3025,7 @@ function renderDTrendMerge(filtered, sems) {
 
 function renderDTrendClass(filtered, sems) {
   // 各班獨立模式：每班一條線
-  const classes = [...new Set(filtered.map(c => c.sheet_name))].sort();
+  const classes = sortSheetNames([...new Set(filtered.map(c => c.sheet_name))]);
 
   const datasets = classes.map(cls => {
     const prog = filtered.find(c => c.sheet_name === cls)?.program || '2yr_gen';
@@ -3005,7 +3067,7 @@ function renderDTrendClass(filtered, sems) {
 
 function renderDProgramBar(allClasses, sems, filterProg) {
   // 各學期、各學制平均分群組長條圖
-  const programs = Object.keys(PROGRAM_LABELS);
+  const programs = PROGRAM_ORDER;
   const datasets = programs.map(prog => {
     const data = sems.map(sem => {
       const cls = allClasses.filter(c => c.semester === sem && c.program === prog);
@@ -3041,7 +3103,7 @@ function renderDProgramBar(allClasses, sems, filterProg) {
 }
 
 function renderDPassRate(allClasses, sems, filterProg) {
-  const programs = Object.keys(PROGRAM_LABELS);
+  const programs = PROGRAM_ORDER;
   const datasets = programs.map(prog => {
     const data = sems.map(sem => {
       const cls = allClasses.filter(c => c.semester === sem && c.program === prog);
@@ -3095,7 +3157,7 @@ function renderDTable(filtered) {
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${semLabel(c.semester)}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600">${c.sheet_name}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">
-        <span class="program-badge prog-${c.program.replace('_','-')}">${PROGRAM_LABELS[c.program]}</span>
+        <span class="program-badge prog-${c.program.replace(/_/g,'-')}">${PROGRAM_LABELS[c.program]}</span>
       </td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right">${c.count}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:'JetBrains Mono',monospace">${c.avg_midterm ?? '–'}</td>
