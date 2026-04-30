@@ -1667,10 +1667,15 @@ function addSvgTooltip(svgEl, selector, contentFn) {
 // ── 資料正規化：清除 sheet_name 的空格、全形字母、名稱變體 ──
 function normalizeSheet(s) {
   if (!s) return s;
-  // 全形英數字母 → 半形
-  s = s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-  // 去除前後空白（含全形空白）
-  s = s.trim().replace(/\s+/g, '');
+  s = String(s);
+  // NFKC 會將全形英數、全形空白等常見變體轉為標準形式
+  if (s.normalize) s = s.normalize('NFKC');
+  // 移除肉眼不可見但會造成 Set/key 不同的字元
+  s = s.replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060\uFE00-\uFE0F\uFEFF]/g, '');
+  // 統一常見破折號/減號變體
+  s = s.replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+  // 去除所有空白（含全形空白、窄不換行空白等）
+  s = s.trim().replace(/[\s\u00A0\u1680\u180E\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/g, '');
   return s;
 }
 
@@ -1751,7 +1756,7 @@ function sortPrograms(progs) {
 
 // 依規定學制順序排序班級名稱（先依學制，再依字母）
 function sortSheetNames(names) {
-  return [...names].sort((a, b) => {
+  return [...new Set(names.map(normalizeSheet).filter(Boolean))].sort((a, b) => {
     const pa = classifyProgram(a, ''), pb = classifyProgram(b, '');
     const oi = (PROGRAM_ORDER.indexOf(pa) + 1 || 99) - (PROGRAM_ORDER.indexOf(pb) + 1 || 99);
     return oi !== 0 ? oi : a.localeCompare(b, 'zh-TW');
@@ -2676,15 +2681,45 @@ function renderFirstVsDelta() {
 function renderHeatmap(filtered) {
   const wrap = document.getElementById('heatmapWrap');
   const sems  = DATA.meta.semesters;
-  const classes = sortSheetNames([...new Set(filtered.map(c=>c.sheet_name))]);
+
+  function mergeWeightedAvg(a, aw, b, bw) {
+    if (a == null) return b ?? null;
+    if (b == null) return a;
+    const wa = aw || 1, wb = bw || 1;
+    return +(((a * wa) + (b * wb)) / (wa + wb)).toFixed(2);
+  }
+
+  const cellMap = new Map();
+  filtered.forEach(c => {
+    const cls = normalizeSheet(c.sheet_name);
+    if (!cls) return;
+    const key = `${c.semester}__${cls}`;
+    const rec = { ...c, sheet_name: cls };
+    const prev = cellMap.get(key);
+    if (!prev) {
+      cellMap.set(key, rec);
+      return;
+    }
+
+    const prevCount = Number(prev.count) || 0;
+    const nextCount = Number(rec.count) || 0;
+    ['avg_midterm', 'avg_final', 'avg_semester'].forEach(field => {
+      prev[field] = mergeWeightedAvg(prev[field], prevCount, rec[field], nextCount);
+    });
+    prev.pass_rate = mergeWeightedAvg(prev.pass_rate, prevCount, rec.pass_rate, nextCount);
+    prev.count = prevCount + nextCount || prev.count || rec.count;
+  });
+
+  const heatRows = [...cellMap.values()];
+  const classes = sortSheetNames([...new Set(heatRows.map(c=>c.sheet_name))]);
   if (!classes.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
 
   const isDark = !document.body.classList.contains('light');
   const cellW=56, cellH=32, labelW=90, headerH=30;
   const W=labelW+sems.length*cellW, H=headerH+classes.length*cellH;
 
-  const vals=filtered.map(c=>c.avg_semester).filter(v=>v!=null);
-  const minV=Math.min(...vals), maxV=Math.max(...vals);
+  const vals=heatRows.map(c=>c.avg_semester).filter(v=>v!=null);
+  const minV=vals.length ? Math.min(...vals) : 0, maxV=vals.length ? Math.max(...vals) : 100;
   const lerp=(v,mn,mx)=>mx===mn?0.5:(v-mn)/(mx-mn);
 
   function scoreColor(v) {
@@ -2706,7 +2741,7 @@ function renderHeatmap(filtered) {
     const y=headerH+ri*cellH;
     svg+=`<text x="${labelW-6}" y="${y+cellH/2+4}" text-anchor="end" fill="${textCol}" font-size="10" font-family="sans-serif">${cls}</text>`;
     sems.forEach((sem,ci)=>{
-      const rec=filtered.find(c=>c.semester===sem&&c.sheet_name===cls);
+      const rec=cellMap.get(`${sem}__${cls}`);
       const v=rec?.avg_semester;
       const fill=scoreColor(v);
       const lum=v!=null?lerp(v,minV,maxV):0.5;
@@ -2880,7 +2915,7 @@ function toggleTheme() {
 // 學制分類器 Program Classifier
 // ══════════════════════════════════════════════════════════
 function classifyProgram(sheetName, semester) {
-  const s = sheetName.trim();
+  const s = normalizeSheet(sheetName) || '';
 
   // 重修班（任務型開設，sheet_name 必含「重修」）
   if (/重修/.test(s)) return 'retake_class';
