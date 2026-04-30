@@ -3468,8 +3468,10 @@ function renderHeatmap(filtered) {
   filtered.forEach(c => {
     const cls = normalizeSheet(c.sheet_name);
     if (!cls) return;
-    const key = `${c.semester}__${cls}`;
-    const rec = { ...c, sheet_name: cls };
+    const program = c.program || classifyProgram(c.sheet_name, c.semester);
+    const rowKey = `${program}__${c.type || ''}__${cls}`;
+    const key = `${c.semester}__${rowKey}`;
+    const rec = { ...c, sheet_name: cls, program, _heatRowKey: rowKey };
     const prev = cellMap.get(key);
     if (!prev) {
       cellMap.set(key, rec);
@@ -3486,20 +3488,34 @@ function renderHeatmap(filtered) {
   });
 
   const heatRows = [...cellMap.values()];
-  const classes = sortSheetNames([...new Set(heatRows.map(c=>c.sheet_name))]);
-  if (!classes.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
+  const rowMap = new Map();
+  heatRows.forEach(c => {
+    if (!rowMap.has(c._heatRowKey)) rowMap.set(c._heatRowKey, c);
+  });
+  const rows = [...rowMap.values()].sort((a, b) =>
+    compareSheetNames(a.sheet_name, b.sheet_name)
+    || programOrderIndex(a.program) - programOrderIndex(b.program)
+    || (a.type || '').localeCompare(b.type || '')
+  );
+  if (!rows.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
+
+  const labelCounts = rows.reduce((acc, r) => {
+    acc[r.sheet_name] = (acc[r.sheet_name] || 0) + 1;
+    return acc;
+  }, {});
 
   const isDark = !document.body.classList.contains('light');
-  const cellW=56, cellH=32, labelW=90, headerH=30;
-  const W=labelW+sems.length*cellW, H=headerH+classes.length*cellH;
+  const cellW=56, cellH=32, labelW=110, headerH=30;
+  const W=labelW+sems.length*cellW, H=headerH+rows.length*cellH;
 
-  const vals=heatRows.map(c=>c.avg_semester).filter(v=>v!=null);
-  const minV=vals.length ? Math.min(...vals) : 0, maxV=vals.length ? Math.max(...vals) : 100;
-  const lerp=(v,mn,mx)=>mx===mn?0.5:(v-mn)/(mx-mn);
+  const HEATMAP_SCORE_MIN = 60;
+  const HEATMAP_SCORE_MAX = 90;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const lerp=(v,mn,mx)=>mx===mn?0.5:clamp01((v-mn)/(mx-mn));
 
   function scoreColor(v) {
     if(v==null) return isDark?'#1c2030':'#e0e4f0';
-    const t=lerp(v,minV,maxV);
+    const t=lerp(v,HEATMAP_SCORE_MIN,HEATMAP_SCORE_MAX);
     const r=Math.round(220*(1-t)+40*t), g=Math.round(80*(1-t)+200*t), b=Math.round(80*(1-t)+100*t);
     return `rgb(${r},${g},${b})`;
   }
@@ -3512,14 +3528,16 @@ function renderHeatmap(filtered) {
   sems.forEach((s,i)=>{
     svg+=`<text x="${labelW+i*cellW+cellW/2}" y="${headerH-8}" text-anchor="middle" fill="${dimCol}" font-size="9" font-family="monospace">${semLabel(s)}</text>`;
   });
-  classes.forEach((cls,ri)=>{
+  rows.forEach((row,ri)=>{
+    const cls = row.sheet_name;
+    const label = labelCounts[cls] > 1 ? `${cls} ${PROGRAM_LABELS[row.program] || row.program}` : cls;
     const y=headerH+ri*cellH;
-    svg+=`<text x="${labelW-6}" y="${y+cellH/2+4}" text-anchor="end" fill="${textCol}" font-size="10" font-family="sans-serif">${cls}</text>`;
+    svg+=`<text x="${labelW-6}" y="${y+cellH/2+4}" text-anchor="end" fill="${textCol}" font-size="10" font-family="sans-serif">${escapeHtml(label)}</text>`;
     sems.forEach((sem,ci)=>{
-      const rec=cellMap.get(`${sem}__${cls}`);
+      const rec=cellMap.get(`${sem}__${row._heatRowKey}`);
       const v=rec?.avg_semester;
       const fill=scoreColor(v);
-      const lum=v!=null?lerp(v,minV,maxV):0.5;
+      const lum=v!=null?lerp(v,HEATMAP_SCORE_MIN,HEATMAP_SCORE_MAX):0.5;
       const txtFill=lum>0.5?'#0a0c14':'#f0f4ff';
       // 將 tooltip 資料存入 data 屬性（escapeHtml 防止 attribute injection）
       const tipData = v!=null
