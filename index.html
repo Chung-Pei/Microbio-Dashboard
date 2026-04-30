@@ -212,9 +212,26 @@ select, input[type="text"] {
   padding: 6px 10px;
   outline: none;
   transition: border-color 0.15s;
+  /* Fix iOS dark mode: override native appearance so CSS background/color apply */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
 }
 select:focus, input[type="text"]:focus { border-color: var(--accent); }
-select { cursor: pointer; min-width: 120px; }
+select {
+  cursor: pointer;
+  min-width: 120px;
+  /* Custom dropdown arrow that respects color scheme */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b748f' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+/* Force option elements to inherit theme colors on supporting browsers */
+select option {
+  background: var(--surface2);
+  color: var(--text);
+}
 .filter-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
 
 /* ── STAT CARDS ── */
@@ -471,11 +488,24 @@ select { cursor: pointer; min-width: 120px; }
 
 /* ── PWA / iOS SAFE AREA ── */
 body {
-  padding-top: env(safe-area-inset-top);
+  /* safe-area 由 header 自行吸收，body 不需重複 padding-top */
   padding-bottom: env(safe-area-inset-bottom);
 }
 header {
-  padding-top: calc(env(safe-area-inset-top) + 0px);
+  /* iOS safe-area: 讓 header 高度自動撐開，tab-bar 跟著偏移 */
+  height: calc(var(--header-h) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+}
+.tab-bar {
+  top: calc(var(--header-h) + env(safe-area-inset-top));
+}
+.panel-wrap {
+  padding-top: calc(var(--header-h) + var(--tab-h) + env(safe-area-inset-top));
+}
+/* 橫向可滑動容器允許 touch 橫向手勢 */
+#heatmapWrap, #boxplotWrap, .slope-wrap, [style*="overflow-x:auto"], [style*="overflow-x: auto"] {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
 }
 
 /* 禁用 iOS 長按選單與點擊高亮（更接近 native app 感） */
@@ -930,6 +960,7 @@ body.light .year-range-badge {
   <div class="chart-card" id="quadrantCard" style="display:none">
     <div class="chart-title" style="--accent-color:var(--accent2)">
       <div class="dot"></div>正課 × 實驗 四象限 Cross-Domain Quadrant
+      <span style="color:var(--text-dim);font-size:9px;margin-left:6px">⚠ 此圖同時比較正課與實驗課，不受上方課程篩選影響</span>
     </div>
     <div class="chart-wrap" style="height:260px">
       <canvas id="chartQuadrant"></canvas>
@@ -1633,11 +1664,50 @@ function addSvgTooltip(svgEl, selector, contentFn) {
 // ══════════════════════════════════════════════════════════
 // LOAD DATA
 // ══════════════════════════════════════════════════════════
+// ── 資料正規化：清除 sheet_name 的空格、全形字母、名稱變體 ──
+function normalizeSheet(s) {
+  if (!s) return s;
+  // 全形英數字母 → 半形
+  s = s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  // 去除前後空白（含全形空白）
+  s = s.trim().replace(/\s+/g, '');
+  return s;
+}
+
+function normalizeData() {
+  // 1. 正規化 class_summary 的 key 與 sheet_name
+  const newCS = {};
+  for (const [key, val] of Object.entries(DATA.class_summary)) {
+    const normName = normalizeSheet(val.sheet_name);
+    val.sheet_name = normName;
+    const normKey = `${val.semester}_${normName}`;
+    // 若已有相同 key，合併（後者覆蓋，保留非 null 值）
+    if (newCS[normKey]) {
+      for (const k of Object.keys(val)) {
+        if (val[k] != null) newCS[normKey][k] = val[k];
+      }
+    } else {
+      newCS[normKey] = val;
+    }
+  }
+  DATA.class_summary = newCS;
+
+  // 2. 正規化 students 中的 sheet_name
+  if (DATA.students) {
+    for (const stu of Object.values(DATA.students)) {
+      if (stu.records) {
+        stu.records.forEach(r => { r.sheet_name = normalizeSheet(r.sheet_name); });
+      }
+    }
+  }
+}
+
 async function loadData() {
   try {
     const res = await fetch('data.json');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     DATA = await res.json();
+    normalizeData();
     init();
   } catch(e) {
     document.getElementById('metaInfo').textContent = `⚠ 無法載入 data.json（${e.message}）`;
@@ -1966,8 +2036,8 @@ function renderB() {
   renderQuadrant();
 
   // B1/B2/B3 新增圖表
-  renderDeltaByProgram();
-  renderRetakeCount();
+  renderDeltaByProgram(retakers);
+  renderRetakeCount(type);
   renderFirstVsDelta();
 }
 
@@ -1977,8 +2047,14 @@ function renderSlope(retakers) {
   const H = 280;
   svg.setAttribute('width', W);
 
+  const isDark = !document.body.classList.contains('light');
+  const textCol  = isDark ? '#9aa0b8' : '#4a5070';
+  const dimCol   = isDark ? '#6b748f' : '#8a90a8';
+  const axisCol  = isDark ? '#2a2f45' : '#c8cce0';
+  const gridCol  = isDark ? '#1c2030' : '#e0e4f0';
+
   if (retakers.length === 0) {
-    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6b748f" font-size="12">無重修資料</text>`;
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="${dimCol}" font-size="12">無重修資料</text>`;
     return;
   }
 
@@ -1994,18 +2070,18 @@ function renderSlope(retakers) {
 
   const x1 = pad.l, x2 = W - pad.r;
   let svgHtml = `
-    <line x1="${x1}" y1="${pad.t}" x2="${x1}" y2="${H-pad.b}" stroke="#2a2f45" stroke-width="1"/>
-    <line x1="${x2}" y1="${pad.t}" x2="${x2}" y2="${H-pad.b}" stroke="#2a2f45" stroke-width="1"/>
-    <text x="${x1}" y="${pad.t-6}" text-anchor="middle" fill="#6b748f" font-size="10">首修</text>
-    <text x="${x2}" y="${pad.t-6}" text-anchor="middle" fill="#6b748f" font-size="10">重修</text>
+    <line x1="${x1}" y1="${pad.t}" x2="${x1}" y2="${H-pad.b}" stroke="${axisCol}" stroke-width="1"/>
+    <line x1="${x2}" y1="${pad.t}" x2="${x2}" y2="${H-pad.b}" stroke="${axisCol}" stroke-width="1"/>
+    <text x="${x1}" y="${pad.t-6}" text-anchor="middle" fill="${dimCol}" font-size="10">首修</text>
+    <text x="${x2}" y="${pad.t-6}" text-anchor="middle" fill="${dimCol}" font-size="10">重修</text>
   `;
 
   // Y-axis labels
   for (let v = Math.ceil(minS/10)*10; v <= maxS; v+=10) {
     const y = scaleY(v);
     svgHtml += `
-      <line x1="${x1-5}" y1="${y}" x2="${x2+5}" y2="${y}" stroke="#1c2030" stroke-width="1"/>
-      <text x="${x1-8}" y="${y+4}" text-anchor="end" fill="#6b748f" font-size="9">${v}</text>
+      <line x1="${x1-5}" y1="${y}" x2="${x2+5}" y2="${y}" stroke="${gridCol}" stroke-width="1"/>
+      <text x="${x1-8}" y="${y+4}" text-anchor="end" fill="${dimCol}" font-size="9">${v}</text>
     `;
   }
 
@@ -2499,14 +2575,13 @@ function renderRetakerFirstDist() {
 // ══════════════════════════════════════════════════════════
 
 // B1: 重修改善率依學制
-function renderDeltaByProgram() {
-  const type = document.getElementById('bFilterType').value;
+function renderDeltaByProgram(retakers) {
   const progDeltas = {};
-  Object.values(DATA.students).forEach(s=>{
-    const recs = s.records.filter(r=>r.is_retaker && r.type===type && r.delta!=null);
-    recs.forEach(r=>{
+  // 使用與其他圖表相同的 retakers（已套用 bFilterType + recs.length >= 2 門檻）
+  retakers.forEach(item => {
+    item.recs.filter(r => r.delta != null).forEach(r => {
       const p = classifyProgram(r.sheet_name, r.semester);
-      if (!progDeltas[p]) progDeltas[p]=[];
+      if (!progDeltas[p]) progDeltas[p] = [];
       progDeltas[p].push(r.delta);
     });
   });
@@ -2533,8 +2608,7 @@ function renderDeltaByProgram() {
 }
 
 // B2: 重修次數分布
-function renderRetakeCount() {
-  const type = document.getElementById('bFilterType').value;
+function renderRetakeCount(type) {
   const countDist = {};
   Object.values(DATA.students).forEach(s=>{
     const recs = s.records.filter(r=>r.is_retaker && r.type===type);
@@ -2868,8 +2942,18 @@ function setDType(t) {
   dType = t;
   document.getElementById('dTypeTheory').classList.toggle('active', t === 'theory');
   document.getElementById('dTypePracticum').classList.toggle('active', t === 'practicum');
-  // 實驗課不支援期中/期末，強制切回學期成績
-  if (t === 'practicum' && dMetric !== 'semester_score') {
+  // 實驗課不支援期中/期末，視覺上 disable 並強制切回學期成績
+  const noMidFin = t === 'practicum';
+  ['dMetricMid', 'dMetricFin'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.disabled = noMidFin;
+      btn.style.opacity = noMidFin ? '0.35' : '1';
+      btn.style.cursor = noMidFin ? 'not-allowed' : 'pointer';
+      btn.title = noMidFin ? '實驗課不支援期中／期末成績' : '';
+    }
+  });
+  if (noMidFin && dMetric !== 'semester_score') {
     setDMetric('semester_score');
     return;
   }
@@ -2982,28 +3066,59 @@ function renderD() {
 }
 
 function renderDTrendMerge(filtered, sems) {
-  // 合併模式：每個學制一條線，每學期取平均
-  const programs = sortPrograms([...new Set(filtered.map(c => c.program))]);
+  // 合併模式語意：
+  // - filterProg === 'all'：顯示各學制個別均線（多條線比較）
+  // - filterProg 指定學制：顯示該學制所有班級的加權平均單條線
+  const filterProg = document.getElementById('dFilterProgram').value;
 
-  const datasets = programs.map(prog => {
+  let datasets;
+  if (filterProg === 'all') {
+    // 所有學制各自一條平均線
+    const allClasses = Object.values(DATA.class_summary).map(c => ({
+      ...c,
+      program: classifyProgram(c.sheet_name, c.semester)
+    })).filter(c => dType === 'practicum' ? c.type === 'practicum' : c.type !== 'practicum');
+
+    const programs = sortPrograms([...new Set(allClasses.map(c => c.program))]);
+    datasets = programs.map(prog => {
+      const data = sems.map(sem => {
+        const cls = allClasses.filter(c => c.semester === sem && c.program === prog);
+        if (!cls.length) return null;
+        const vals = cls.map(c => c[metricField(dMetric)]).filter(v => v != null);
+        return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : null;
+      });
+      return {
+        label: PROGRAM_LABELS[prog],
+        data,
+        borderColor: PROGRAM_COLORS[prog],
+        backgroundColor: PROGRAM_COLORS[prog] + '20',
+        tension: 0.3,
+        fill: false,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        spanGaps: true,
+      };
+    });
+  } else {
+    // 單一學制：計算該學制跨學期加權平均（單條線）
     const data = sems.map(sem => {
-      const cls = filtered.filter(c => c.semester === sem && c.program === prog);
+      const cls = filtered.filter(c => c.semester === sem);
       if (!cls.length) return null;
       const vals = cls.map(c => c[metricField(dMetric)]).filter(v => v != null);
       return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : null;
     });
-    return {
-      label: PROGRAM_LABELS[prog],
+    datasets = [{
+      label: PROGRAM_LABELS[filterProg] + ' 均線',
       data,
-      borderColor: PROGRAM_COLORS[prog],
-      backgroundColor: PROGRAM_COLORS[prog] + '20',
+      borderColor: PROGRAM_COLORS[filterProg] || '#4f8ef7',
+      backgroundColor: (PROGRAM_COLORS[filterProg] || '#4f8ef7') + '20',
       tension: 0.3,
       fill: false,
       pointRadius: 5,
       pointHoverRadius: 7,
       spanGaps: true,
-    };
-  });
+    }];
+  }
 
   mkChart('chartCohortTrend', {
     type: 'line',
@@ -3072,6 +3187,7 @@ function renderDTrendClass(filtered, sems) {
 
 function renderDProgramBar(allClasses, sems, filterProg) {
   // 各學期、各學制平均分群組長條圖
+  // filterProg：'all' 顯示全部學制；指定學制時，高亮該學制，其餘半透明
   const programs = PROGRAM_ORDER;
   const datasets = programs.map(prog => {
     const data = sems.map(sem => {
@@ -3080,15 +3196,25 @@ function renderDProgramBar(allClasses, sems, filterProg) {
       const vals = cls.map(c => c[metricField(dMetric)]).filter(v => v != null);
       return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
     });
+
+    // 依 filterProg 決定視覺強調程度
+    const isHighlighted = filterProg === 'all' || prog === filterProg;
+    const alpha = isHighlighted ? 'bb' : '33';
+    const borderW = isHighlighted ? (filterProg !== 'all' && prog === filterProg ? 2 : 1) : 1;
+
     return {
       label: PROGRAM_LABELS[prog],
       data,
-      backgroundColor: PROGRAM_COLORS[prog] + 'bb',
-      borderColor: PROGRAM_COLORS[prog],
-      borderWidth: 1,
+      backgroundColor: PROGRAM_COLORS[prog] + alpha,
+      borderColor: PROGRAM_COLORS[prog] + (isHighlighted ? '' : '66'),
+      borderWidth: borderW,
       borderRadius: 3,
     };
   });
+
+  // 副標題反映當前指標
+  const subtitle = `各學期學制比較｜指標：${metricLabel(dMetric)}` +
+    (filterProg !== 'all' ? `｜高亮：${PROGRAM_LABELS[filterProg]}` : '');
 
   mkChart('chartProgramBar', {
     type: 'bar',
@@ -3097,7 +3223,8 @@ function renderDProgramBar(allClasses, sems, filterProg) {
       ...CHART_DEFAULTS,
       plugins: {
         ...CHART_DEFAULTS.plugins,
-        legend: { labels: { color: 'var(--text-dim)', font: { size: 9 }, boxWidth: 10 } }
+        legend: { labels: { color: 'var(--text-dim)', font: { size: 9 }, boxWidth: 10 } },
+        subtitle: { display: true, text: subtitle, color: 'var(--text-dim)', font: { size: 10 }, padding: { bottom: 4 } }
       },
       scales: {
         x: { ...CHART_DEFAULTS.scales.x },
