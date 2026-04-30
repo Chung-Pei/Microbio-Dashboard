@@ -263,7 +263,7 @@ select option {
 .stat-card .sub { font-size: 10px; color: var(--text-mid); margin-top: 4px; font-family: 'JetBrains Mono', 'Courier New', monospace; }
 
 /* ── CHART GRID ── */
-.chart-grid { display: grid; gap: 14px; margin-bottom: 14px; }
+.chart-grid { display: grid; gap: 14px; margin-bottom: 14px; min-width: 0; }
 .chart-grid-2 { grid-template-columns: 1fr 1fr; }
 .chart-grid-3 { grid-template-columns: 2fr 1fr; }
 
@@ -273,6 +273,8 @@ select option {
   border-radius: var(--radius);
   padding: 16px;
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 .chart-title {
   font-size: 11px;
@@ -301,6 +303,9 @@ select option {
 }
 .chart-wrap {
   position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
@@ -309,7 +314,9 @@ select option {
 .chart-scroll-inner {
   position: relative;
   height: 100%;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 .chart-scroll-inner canvas {
   display: block;
@@ -1354,6 +1361,11 @@ function refreshChartDefaults() {
 
 const charts = {};
 const chartConfigs = {};
+let chartResizeFrame = null;
+const observedChartWraps = new WeakSet();
+const chartResizeObserver = typeof ResizeObserver !== 'undefined'
+  ? new ResizeObserver(scheduleChartResize)
+  : null;
 
 function chartUsesCategoryX(config) {
   const xScale = config.options?.scales?.x;
@@ -1370,13 +1382,51 @@ function chartDataLength(config) {
 }
 
 function estimateChartMinWidth(config, viewportWidth) {
+  return Math.max(Math.floor(viewportWidth || 0), 280);
+}
+
+function availableChartWidth(wrap) {
+  const rect = wrap.getBoundingClientRect();
+  const docWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+  const containerWidth = Math.floor(wrap.clientWidth || rect.width || docWidth || 320);
+  const pageLimit = docWidth ? Math.floor(docWidth - Math.max(rect.left, 0) - 12) : containerWidth;
+  return Math.max(280, Math.min(containerWidth, pageLimit || containerWidth));
+}
+
+function applyAdaptiveChartOptions(config, width) {
   const count = chartDataLength(config);
-  if (!count) return Math.max(viewportWidth || 0, 300);
-  const datasets = config.data?.datasets || [];
-  const type = config.type || datasets.find(ds => ds.type)?.type || '';
-  const barLike = type === 'bar' || datasets.some(ds => ds.type === 'bar');
-  const perItem = barLike ? Math.max(46, Math.min(96, 30 + datasets.length * 10)) : 64;
-  return Math.max(viewportWidth || 0, Math.min(110 + count * perItem, 3600));
+  if (chartUsesCategoryX(config) && config.options?.scales?.x) {
+    const tickBudget = Math.max(3, Math.floor(width / (width < 520 ? 78 : 92)));
+    const xScale = config.options.scales.x;
+    config.options.scales = { ...config.options.scales };
+    config.options.scales.x = {
+      ...xScale,
+      ticks: {
+        ...(xScale.ticks || {}),
+        autoSkip: true,
+        maxTicksLimit: count ? Math.min(count, tickBudget) : tickBudget,
+        minRotation: 0,
+        maxRotation: width < 560 ? 45 : 0,
+      }
+    };
+  }
+
+  const legend = config.options?.plugins?.legend;
+  if (legend && legend.display !== false) {
+    config.options.plugins = { ...(config.options.plugins || {}) };
+    config.options.plugins.legend = {
+      ...legend,
+      position: width < 520 ? 'bottom' : (legend.position || 'top'),
+      labels: {
+        ...(legend.labels || {}),
+        boxWidth: width < 520 ? 9 : (legend.labels?.boxWidth || 12),
+        font: {
+          ...(legend.labels?.font || {}),
+          size: width < 520 ? 9 : (legend.labels?.font?.size || 11),
+        }
+      }
+    };
+  }
 }
 
 function prepareScrollableChart(canvas, config) {
@@ -1391,8 +1441,36 @@ function prepareScrollableChart(canvas, config) {
     canvas.parentNode.insertBefore(inner, canvas);
     inner.appendChild(canvas);
   }
-  const minWidth = estimateChartMinWidth(config, wrap.clientWidth || 0);
-  inner.style.minWidth = `${minWidth}px`;
+  const fitWidth = estimateChartMinWidth(config, availableChartWidth(wrap));
+  applyAdaptiveChartOptions(config, fitWidth);
+  inner.style.width = `${fitWidth}px`;
+  inner.style.minWidth = '0';
+  inner.style.maxWidth = '100%';
+}
+
+function resizeAllCharts() {
+  Object.entries(charts).forEach(([id, chart]) => {
+    const canvas = document.getElementById(id);
+    const config = chartConfigs[id];
+    if (!canvas || !config) return;
+    prepareScrollableChart(canvas, config);
+    chart.resize();
+  });
+}
+
+function scheduleChartResize() {
+  if (chartResizeFrame) cancelAnimationFrame(chartResizeFrame);
+  chartResizeFrame = requestAnimationFrame(() => {
+    chartResizeFrame = null;
+    resizeAllCharts();
+  });
+}
+
+function observeChartWrap(canvas) {
+  const wrap = canvas.closest('.chart-wrap');
+  if (!wrap || observedChartWraps.has(wrap) || !chartResizeObserver) return;
+  observedChartWraps.add(wrap);
+  chartResizeObserver.observe(wrap);
 }
 
 function mkChart(id, config) {
@@ -1414,7 +1492,11 @@ function mkChart(id, config) {
   smoothScaleEdges(config);
   charts[id] = new Chart(ctx, config);
   chartConfigs[id] = config;
-  requestAnimationFrame(() => attachChartExpandButtons());
+  observeChartWrap(ctx);
+  requestAnimationFrame(() => {
+    charts[id]?.resize();
+    attachChartExpandButtons();
+  });
   return charts[id];
 }
 
@@ -1748,15 +1830,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeExpandedChart();
 });
 
-window.addEventListener('resize', () => {
-  Object.entries(charts).forEach(([id, chart]) => {
-    const canvas = document.getElementById(id);
-    const config = chartConfigs[id];
-    if (!canvas || !config) return;
-    prepareScrollableChart(canvas, config);
-    chart.resize();
-  });
-});
+window.addEventListener('resize', scheduleChartResize);
+window.addEventListener('orientationchange', scheduleChartResize);
 
 // 建立 info 按鈕並掛載到 chart-title
 function attachInfoButtons() {
