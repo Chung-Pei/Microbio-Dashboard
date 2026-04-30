@@ -137,6 +137,17 @@ header {
   color: var(--text-dim);
   text-align: right;
 }
+.meta-toggle {
+  display: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text-mid);
+  font-size: 11px;
+  font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  padding: 5px 8px;
+  cursor: pointer;
+}
 
 /* ── TABS ── */
 .tab-bar {
@@ -530,12 +541,73 @@ body.chart-expanded-open { overflow: hidden; }
 
 /* ── RESPONSIVE ── */
 @media (max-width: 700px) {
+  :root { --header-h: 86px; }
   .chart-grid-2, .chart-grid-3 { grid-template-columns: 1fr; }
   .panel { padding: 12px; }
   .filter-bar { gap: 8px; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .tab-label { display: none; }
-  header { padding: 0 12px; gap: 8px; }
+  body header {
+    height: calc(var(--header-h) + env(safe-area-inset-top));
+    padding: calc(env(safe-area-inset-top) + 7px) 10px 7px;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-content: center;
+  }
+  .header-sep { display: none; }
+  .header-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  body .year-range-badge {
+    order: 5;
+    flex: 0 0 auto;
+    padding: 3px 9px;
+  }
+  .subject-field {
+    order: 6;
+    flex: 0 0 auto;
+  }
+  body .subject-input {
+    width: 74px;
+    min-width: 74px;
+    padding: 3px 8px;
+  }
+  .meta-toggle {
+    display: inline-flex;
+    order: 7;
+    align-items: center;
+    justify-content: center;
+  }
+  body .theme-toggle {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    font-size: 14px;
+  }
+  .header-meta {
+    display: none;
+    order: 20;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 10px;
+    right: 10px;
+    z-index: 210;
+    margin-left: 0;
+    padding: 8px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+    text-align: left;
+    font-size: 10px;
+    white-space: normal;
+  }
+  header.meta-open .header-meta { display: block; }
 }
 
 /* ── SCROLLBAR ── */
@@ -818,8 +890,8 @@ body.light .year-range-badge {
   white-space: nowrap;
 }
 .subject-input {
-  min-width: 110px;
-  width: 110px;
+  min-width: 84px;
+  width: 84px;
   background: rgba(79,142,247,0.12);
   border: 1px solid rgba(79,142,247,0.25);
   border-radius: 20px;
@@ -987,10 +1059,10 @@ body.light .subject-input {
   <div class="header-title">學習分析儀表板</div>
   <span class="year-range-badge" id="yearRangeBadge">—</span>
   <div class="subject-field" id="subjectMeta">
-    <span>科目</span>
-    <input class="subject-input" id="subjectInput" type="text" placeholder="輸入科目名稱" oninput="updateSubjectDisplay()">
+    <input class="subject-input" id="subjectInput" type="text" placeholder="科目名" oninput="updateSubjectDisplay()">
   </div>
   <div class="header-meta" id="metaInfo">載入中...</div>
+  <button class="meta-toggle" id="metaToggle" onclick="toggleMetaInfo()" aria-expanded="false">資訊</button>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深/淺色模式">🌙</button>
 </header>
 
@@ -2342,6 +2414,10 @@ function semLabel(s) {
   return `${y}(${t})`;
 }
 
+function sortSemestersDesc(sems) {
+  return [...sems].sort((a, b) => Number(b) - Number(a));
+}
+
 // 依規定學制順序排序程式碼 key
 function sortPrograms(progs) {
   return [...progs].sort((a, b) =>
@@ -2356,9 +2432,10 @@ function sortSheetNames(names) {
 
 function populateFilters() {
   const sems = DATA.meta.semesters;
+  const semsDesc = sortSemestersDesc(sems);
   // Panel A
   const aSem = document.getElementById('aFilterSem');
-  aSem.innerHTML = sems.map(s => `<option value="${s}">${semLabel(s)}</option>`).join('');
+  aSem.innerHTML = semsDesc.map(s => `<option value="${s}">${semLabel(s)}</option>`).join('');
 
   // Trend
   const trendSheets = sortSheetNames([...new Set(
@@ -3593,6 +3670,13 @@ function updateSubjectDisplay() {
   if (badge && subj) {
     badge.title = '科目：' + subj;
   }
+}
+
+function toggleMetaInfo() {
+  const header = document.querySelector('header');
+  const btn = document.getElementById('metaToggle');
+  const open = header?.classList.toggle('meta-open');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 function toggleTheme() {
