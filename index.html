@@ -870,8 +870,12 @@ body.light .year-range-badge {
 <header>
   <div class="logo">LA<span>/</span>DASH</div>
   <div class="header-sep"></div>
-  <div class="header-title">北護微免學學習分析儀表板</div>
+  <div class="header-title">學習分析儀表板</div>
   <span class="year-range-badge" id="yearRangeBadge">—</span>
+  <div class="header-meta" id="subjectMeta" style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+    <span style="font-size:10px;opacity:0.6;white-space:nowrap">科目</span>
+    <input id="subjectInput" type="text" placeholder="輸入科目名稱" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font-size:11px;width:110px;outline:none" oninput="updateSubjectDisplay()">
+  </div>
   <div class="header-meta" id="metaInfo">載入中...</div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深/淺色模式">🌙</button>
 </header>
@@ -895,6 +899,10 @@ body.light .year-range-badge {
   <button class="tab" onclick="switchTab('B')">
     <span>重修分析</span>
     <span class="tab-label">Retaker Analysis</span>
+  </button>
+  <button class="tab" onclick="switchTab('P')" style="margin-left:auto">
+    <span>🖨 列印</span>
+    <span class="tab-label">Print</span>
   </button>
 </div>
 
@@ -1260,6 +1268,30 @@ body.light .year-range-badge {
   </div>
 </div>
 
+<!-- ══ PANEL P (列印) ══ -->
+<div class="panel" id="panelP">
+  <div style="padding:16px 0 8px">
+    <h2 style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:16px">🖨 預覽列印 Print Preview</h2>
+
+    <!-- 選擇要列印的圖表 -->
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">選擇列印項目</div>
+      <div id="printSelections" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+
+    <!-- 預覽列印按鈕 -->
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="doPrintPreview()" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer">預覽列印</button>
+      <button onclick="doPrint()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer">直接列印 / 另存 PDF</button>
+    </div>
+
+    <!-- 預覽區域 (橫向可滑動) -->
+    <div id="printPreviewArea" style="display:none;overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:#fff;color:#000;padding:20px;min-height:200px">
+      <div id="printPreviewContent" style="min-width:900px"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════
 // SECURITY HELPERS
@@ -1419,6 +1451,7 @@ function applyAdaptiveChartOptions(config, width) {
       position: width < 520 ? 'bottom' : (legend.position || 'top'),
       labels: {
         ...(legend.labels || {}),
+        color: (legend.labels?.color) || CHART_DEFAULTS.plugins.legend.labels.color,
         boxWidth: width < 520 ? 9 : (legend.labels?.boxWidth || 12),
         font: {
           ...(legend.labels?.font || {}),
@@ -3377,13 +3410,14 @@ function renderCorrelation(allClasses) {
 
 function switchTab(tab) {
   closeExpandedChart();
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['D','A','C','B'][i]===tab));
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['D','A','C','B','P'][i]===tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel'+tab).classList.add('active');
   if (tab === 'A') renderA();
   if (tab === 'B') renderB();
   if (tab === 'C') { renderAnomalyDensity(); renderRetakerFirstDist(); }
   if (tab === 'D') renderD();
+  if (tab === 'P') renderPrintPanel();
   requestAnimationFrame(() => {
     attachInfoButtons();
     attachChartExpandButtons();
@@ -3393,6 +3427,14 @@ function switchTab(tab) {
 // ══════════════════════════════════════════════════════════
 // 深/淺色模式切換
 // ══════════════════════════════════════════════════════════
+function updateSubjectDisplay() {
+  const subj = document.getElementById('subjectInput')?.value?.trim();
+  const badge = document.getElementById('yearRangeBadge');
+  if (badge && subj) {
+    badge.title = '科目：' + subj;
+  }
+}
+
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light');
   document.getElementById('themeToggle').textContent = isLight ? '🌞' : '🌙';
@@ -3956,6 +3998,126 @@ const isStandalone = window.navigator.standalone === true;
 if (isIOS && isSafari && !isStandalone) {
   // 延遲 3 秒再顯示，讓使用者先看到內容
   setTimeout(showIOSInstallBanner, 3000);
+}
+
+// ══════════════════════════════════════════════════════════
+// PRINT PANEL
+// ══════════════════════════════════════════════════════════
+const PRINT_ITEMS = [
+  { id: 'chartCohortTrend',      label: '整屆跨學期趨勢',           tab: 'D' },
+  { id: 'chartProgramBar',       label: '各學期學制比較',           tab: 'D' },
+  { id: 'chartPassRate',         label: '及格率比較',               tab: 'D' },
+  { id: 'chartTrend',            label: '班級趨勢 (班級輪廓)',       tab: 'A' },
+  { id: 'chartMidFinal',         label: '期中/期末散佈圖',           tab: 'A' },
+  { id: 'chartPassRateA',        label: '及格率趨勢 (班級輪廓)',     tab: 'A' },
+  { id: 'chartAnomalyDensity',   label: '異常事件密度',             tab: 'C' },
+  { id: 'chartRetakerFirstDist', label: '首修成績分布',             tab: 'C' },
+  { id: 'chartDeltaByProgram',   label: '重修改善率依學制',         tab: 'B' },
+  { id: 'chartRetakeCount',      label: '重修次數分布',             tab: 'B' },
+  { id: 'chartFirstVsDelta',     label: '首修成績 vs 重修進步',     tab: 'B' },
+];
+
+function renderPrintPanel() {
+  const container = document.getElementById('printSelections');
+  if (!container) return;
+  container.innerHTML = '';
+  PRINT_ITEMS.forEach(item => {
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;color:var(--text)';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'print_' + item.id;
+    cb.checked = true;
+    cb.style.accentColor = 'var(--accent)';
+    const tabBadge = document.createElement('span');
+    tabBadge.style.cssText = 'font-size:10px;opacity:0.6;background:var(--surface1);border-radius:4px;padding:1px 5px';
+    tabBadge.textContent = {D:'整屆',A:'班級',C:'個案',B:'重修'}[item.tab] || item.tab;
+    label.appendChild(cb);
+    label.appendChild(tabBadge);
+    label.appendChild(document.createTextNode(item.label));
+    container.appendChild(label);
+  });
+}
+
+function getSelectedPrintItems() {
+  return PRINT_ITEMS.filter(item => {
+    const cb = document.getElementById('print_' + item.id);
+    return cb && cb.checked;
+  });
+}
+
+function buildPrintHTML(items) {
+  let html = `<div style="font-family:sans-serif;background:#fff;color:#000;padding:20px">
+    <div style="border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px">
+      <h1 style="font-size:18px;margin:0">學習分析儀表板</h1>`;
+  const subj = document.getElementById('subjectInput')?.value?.trim();
+  if (subj) html += `<div style="font-size:13px;color:#555;margin-top:4px">科目：${subj}</div>`;
+  const meta = document.getElementById('metaInfo')?.textContent;
+  if (meta) html += `<div style="font-size:11px;color:#888;margin-top:2px">${meta}</div>`;
+  html += `</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px">`;
+
+  items.forEach(item => {
+    const canvas = document.getElementById(item.id);
+    if (canvas) {
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">
+          <div style="font-size:12px;font-weight:600;color:#444;margin-bottom:8px">${item.label}</div>
+          <img src="${dataUrl}" style="width:100%;height:auto;display:block" />
+        </div>`;
+      } catch(e) {
+        html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px;color:#666;font-size:12px">${item.label}<br><small>（圖表無法擷取）</small></div>`;
+      }
+    }
+  });
+  html += `</div></div>`;
+  return html;
+}
+
+function doPrintPreview() {
+  const items = getSelectedPrintItems();
+  if (!items.length) { alert('請至少選擇一個圖表'); return; }
+  const area = document.getElementById('printPreviewArea');
+  const content = document.getElementById('printPreviewContent');
+  content.innerHTML = buildPrintHTML(items);
+  area.style.display = 'block';
+  area.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function doPrint() {
+  const items = getSelectedPrintItems();
+  if (!items.length) { alert('請至少選擇一個圖表'); return; }
+  const html = buildPrintHTML(items);
+
+  // Try window.print() approach first
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write(`<!DOCTYPE html><html><head>
+      <meta charset="UTF-8">
+      <title>學習分析儀表板 - 列印</title>
+      <style>
+        body { margin: 0; padding: 20px; background:#fff; }
+        @page { size: A4 landscape; margin: 15mm; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style>
+    </head><body>${html}<script>
+      window.onload = function() {
+        setTimeout(function() {
+          window.print();
+        }, 300);
+      };
+    <\/script></body></html>`);
+    printWindow.document.close();
+  } else {
+    // Fallback: download as HTML file
+    const blob = new Blob([`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>列印</title><style>body{margin:20px;background:#fff}@page{size:A4 landscape;margin:15mm}</style></head><body>${html}</body></html>`], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '學習分析報表.html';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
 }
 
 // ── BOOT ──
