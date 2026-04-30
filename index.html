@@ -893,6 +893,79 @@ body.light .subject-input {
   white-space: nowrap;
 }
 #panelD .view-btn.active { background: var(--accent); color: #fff; }
+
+/* ── PRINT PANEL ── */
+.print-selection-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.print-selection-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 12px;
+}
+.print-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.print-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  user-select: none;
+}
+.print-choice:hover {
+  border-color: rgba(79,142,247,0.55);
+}
+.print-choice input[type="checkbox"] {
+  -webkit-appearance: checkbox;
+  -moz-appearance: checkbox;
+  appearance: checkbox;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.print-choice.selected {
+  border-color: rgba(79,142,247,0.75);
+  background: rgba(79,142,247,0.14);
+  box-shadow: 0 0 0 1px rgba(79,142,247,0.12) inset;
+}
+.print-choice .print-tab {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: rgba(107,116,143,0.14);
+  border-radius: 4px;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+.print-choice .print-label {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+}
+.print-summary {
+  margin-top: 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
 </style>
 </head>
 <body>
@@ -1304,9 +1377,10 @@ body.light .subject-input {
     <h2 style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:16px">🖨 預覽列印 Print Preview</h2>
 
     <!-- 選擇要列印的圖表 -->
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">選擇列印項目</div>
-      <div id="printSelections" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div class="print-selection-box">
+      <div class="print-selection-title">選擇列印項目</div>
+      <div id="printSelections" class="print-group"></div>
+      <div id="printSummary" class="print-summary"></div>
     </div>
 
     <!-- 預覽列印按鈕 -->
@@ -4074,18 +4148,38 @@ if (isIOS && isSafari && !isStandalone) {
 // PRINT PANEL
 // ══════════════════════════════════════════════════════════
 const PRINT_ITEMS = [
-  { id: 'chartCohortTrend',      label: '整屆跨學期趨勢',           tab: 'D' },
-  { id: 'chartProgramBar',       label: '各學期學制比較',           tab: 'D' },
-  { id: 'chartPassRate',         label: '及格率比較',               tab: 'D' },
-  { id: 'chartTrend',            label: '班級趨勢 (班級輪廓)',       tab: 'A' },
-  { id: 'chartMidFinal',         label: '期中/期末散佈圖',           tab: 'A' },
-  { id: 'chartPassRateA',        label: '及格率趨勢 (班級輪廓)',     tab: 'A' },
-  { id: 'chartAnomalyDensity',   label: '異常事件密度',             tab: 'C' },
-  { id: 'chartRetakerFirstDist', label: '首修成績分布',             tab: 'C' },
-  { id: 'chartDeltaByProgram',   label: '重修改善率依學制',         tab: 'B' },
-  { id: 'chartRetakeCount',      label: '重修次數分布',             tab: 'B' },
-  { id: 'chartFirstVsDelta',     label: '首修成績 vs 重修進步',     tab: 'B' },
+  { id: 'chartCohortTrend',      label: '整屆跨學期趨勢',           tab: 'D', type: 'canvas', checked: true },
+  { id: 'chartProgramBar',       label: '各學期學制比較',           tab: 'D', type: 'canvas', checked: true },
+  { id: 'chartPassRate',         label: '及格率比較',               tab: 'D', type: 'canvas', checked: true },
+  { id: 'heatmapWrap',           label: '學期 × 班級成績熱力圖',     tab: 'D', type: 'svg',    checked: true },
+  { id: 'boxplotWrap',           label: '學制成績分布箱形圖',       tab: 'D', type: 'svg',    checked: true },
+  { id: 'chartCorrelation',      label: '人數 vs 及格率相關性',      tab: 'D', type: 'canvas', checked: false },
+  { id: 'chartDist',             label: '成績分布直方圖',           tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartMidFinal',         label: '期中/期末指標對比',         tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartTrend',            label: '班級跨屆趨勢',             tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartNormalOverlay',    label: '常態分布曲線疊加',         tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartRegression',       label: '期中 → 期末線性迴歸',       tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartVariance',         label: '與前次同班比較 Δ',          tab: 'A', type: 'canvas', checked: false },
+  { id: 'chartAnomalyDensity',   label: '異常事件密度',             tab: 'C', type: 'canvas', checked: false },
+  { id: 'chartRetakerFirstDist', label: '重修生首修成績分布',       tab: 'C', type: 'canvas', checked: false },
+  { id: 'slopeChart',            label: '首修 → 重修進退步坡度圖',   tab: 'B', type: 'svg',    checked: false },
+  { id: 'chartDelta',            label: '重修 Δ 分布',              tab: 'B', type: 'canvas', checked: false },
+  { id: 'chartDeltaByProgram',   label: '重修改善率依學制',         tab: 'B', type: 'canvas', checked: false },
+  { id: 'chartRetakeCount',      label: '重修次數分布',             tab: 'B', type: 'canvas', checked: false },
+  { id: 'chartFirstVsDelta',     label: '首修成績 vs 重修進步',     tab: 'B', type: 'canvas', checked: false },
 ];
+
+const PRINT_TAB_LABELS = { D: '整屆', A: '班級', C: '個案', B: '重修' };
+
+function updatePrintChoiceState() {
+  const selectedCount = getSelectedPrintItems().length;
+  document.querySelectorAll('.print-choice').forEach(label => {
+    const cb = label.querySelector('input[type="checkbox"]');
+    label.classList.toggle('selected', !!cb?.checked);
+  });
+  const summary = document.getElementById('printSummary');
+  if (summary) summary.textContent = `已選擇 ${selectedCount} 個列印項目`;
+}
 
 function renderPrintPanel() {
   const container = document.getElementById('printSelections');
@@ -4093,20 +4187,24 @@ function renderPrintPanel() {
   container.innerHTML = '';
   PRINT_ITEMS.forEach(item => {
     const label = document.createElement('label');
-    label.style.cssText = 'display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;color:var(--text)';
+    label.className = 'print-choice';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.id = 'print_' + item.id;
-    cb.checked = true;
-    cb.style.accentColor = 'var(--accent)';
+    cb.checked = item.checked !== false;
+    cb.addEventListener('change', updatePrintChoiceState);
     const tabBadge = document.createElement('span');
-    tabBadge.style.cssText = 'font-size:10px;opacity:0.6;background:var(--surface1);border-radius:4px;padding:1px 5px';
-    tabBadge.textContent = {D:'整屆',A:'班級',C:'個案',B:'重修'}[item.tab] || item.tab;
+    tabBadge.className = 'print-tab';
+    tabBadge.textContent = PRINT_TAB_LABELS[item.tab] || item.tab;
+    const labelText = document.createElement('span');
+    labelText.className = 'print-label';
+    labelText.textContent = item.label;
     label.appendChild(cb);
     label.appendChild(tabBadge);
-    label.appendChild(document.createTextNode(item.label));
+    label.appendChild(labelText);
     container.appendChild(label);
   });
+  updatePrintChoiceState();
 }
 
 function getSelectedPrintItems() {
@@ -4116,29 +4214,87 @@ function getSelectedPrintItems() {
   });
 }
 
+function withPrintablePanelsVisible(task) {
+  const panels = [...document.querySelectorAll('.panel')].filter(p => p.id !== 'panelP');
+  const originals = panels.map(p => ({
+    el: p,
+    display: p.style.display,
+    visibility: p.style.visibility,
+    position: p.style.position,
+    left: p.style.left,
+    top: p.style.top,
+    width: p.style.width,
+    pointerEvents: p.style.pointerEvents,
+  }));
+  panels.forEach(p => {
+    p.style.display = 'block';
+    p.style.visibility = 'hidden';
+    p.style.position = 'absolute';
+    p.style.left = '-10000px';
+    p.style.top = '0';
+    p.style.width = '1200px';
+    p.style.pointerEvents = 'none';
+  });
+  try {
+    task();
+  } finally {
+    originals.forEach(({ el, ...style }) => Object.assign(el.style, style));
+  }
+}
+
+function preparePrintCharts() {
+  if (!DATA) return;
+  withPrintablePanelsVisible(() => {
+    renderD();
+    renderA();
+    renderB();
+    renderAnomalyDensity();
+    renderRetakerFirstDist();
+    Object.values(charts).forEach(chart => {
+      chart.resize();
+      chart.update('none');
+    });
+  });
+}
+
+function getPrintableSvgHtml(item) {
+  const el = document.getElementById(item.id);
+  if (!el) return '';
+  const svg = el.tagName?.toLowerCase() === 'svg' ? el : el.querySelector('svg');
+  return svg ? svg.outerHTML : '';
+}
+
+function getPrintableItemHTML(item) {
+  const title = `<div style="font-size:12px;font-weight:600;color:#444;margin-bottom:8px">${escapeHtml(item.label)}</div>`;
+  const empty = `<div style="color:#777;font-size:12px;padding:18px 0">此項目目前沒有可列印圖表</div>`;
+  if (item.type === 'svg') {
+    const svgHtml = getPrintableSvgHtml(item);
+    return title + (svgHtml
+      ? `<div style="width:100%;overflow:hidden">${svgHtml}</div>`
+      : empty);
+  }
+  const canvas = document.getElementById(item.id);
+  if (!canvas) return title + empty;
+  try {
+    const dataUrl = canvas.toDataURL('image/png');
+    return title + `<img src="${dataUrl}" style="width:100%;height:auto;display:block" />`;
+  } catch(e) {
+    return title + `<div style="color:#777;font-size:12px;padding:18px 0">圖表無法擷取</div>`;
+  }
+}
+
 function buildPrintHTML(items) {
   let html = `<div style="font-family:sans-serif;background:#fff;color:#000;padding:20px">
     <div style="border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px">
       <h1 style="font-size:18px;margin:0">學習分析儀表板</h1>`;
   const subj = document.getElementById('subjectInput')?.value?.trim();
-  if (subj) html += `<div style="font-size:13px;color:#555;margin-top:4px">科目：${subj}</div>`;
+  if (subj) html += `<div style="font-size:13px;color:#555;margin-top:4px">科目：${escapeHtml(subj)}</div>`;
   const meta = document.getElementById('metaInfo')?.textContent;
-  if (meta) html += `<div style="font-size:11px;color:#888;margin-top:2px">${meta}</div>`;
+  if (meta) html += `<div style="font-size:11px;color:#888;margin-top:2px">${escapeHtml(meta)}</div>`;
   html += `</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px">`;
 
   items.forEach(item => {
-    const canvas = document.getElementById(item.id);
-    if (canvas) {
-      try {
-        const dataUrl = canvas.toDataURL('image/png');
-        html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">
-          <div style="font-size:12px;font-weight:600;color:#444;margin-bottom:8px">${item.label}</div>
-          <img src="${dataUrl}" style="width:100%;height:auto;display:block" />
-        </div>`;
-      } catch(e) {
-        html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px;color:#666;font-size:12px">${item.label}<br><small>（圖表無法擷取）</small></div>`;
-      }
-    }
+    html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">${getPrintableItemHTML(item)}</div>`;
   });
   html += `</div></div>`;
   return html;
@@ -4147,6 +4303,7 @@ function buildPrintHTML(items) {
 function doPrintPreview() {
   const items = getSelectedPrintItems();
   if (!items.length) { alert('請至少選擇一個圖表'); return; }
+  preparePrintCharts();
   const area = document.getElementById('printPreviewArea');
   const content = document.getElementById('printPreviewContent');
   content.innerHTML = buildPrintHTML(items);
@@ -4157,6 +4314,7 @@ function doPrintPreview() {
 function doPrint() {
   const items = getSelectedPrintItems();
   if (!items.length) { alert('請至少選擇一個圖表'); return; }
+  preparePrintCharts();
   const html = buildPrintHTML(items);
 
   // Try window.print() approach first
