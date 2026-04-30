@@ -283,6 +283,7 @@ select option {
   margin-bottom: 14px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .chart-title .dot {
@@ -291,7 +292,56 @@ select option {
   background: var(--accent-color, var(--accent));
   flex-shrink: 0;
 }
-.chart-wrap { position: relative; }
+.chart-title-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chart-wrap {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.chart-scroll-inner {
+  position: relative;
+  height: 100%;
+  min-width: 100%;
+}
+.chart-scroll-inner canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+body.chart-expanded-open { overflow: hidden; }
+.chart-card.chart-expanded {
+  position: fixed;
+  top: calc(var(--header-h) + var(--tab-h) + env(safe-area-inset-top) + 10px);
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 180;
+  display: flex !important;
+  flex-direction: column;
+  overflow: auto;
+  box-shadow: 0 22px 64px rgba(0,0,0,0.45);
+}
+.chart-card.chart-expanded .chart-wrap {
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 420px;
+}
+.chart-card.chart-expanded #heatmapWrap,
+.chart-card.chart-expanded #boxplotWrap,
+.chart-card.chart-expanded .slope-wrap {
+  flex: 1 1 auto;
+  min-height: 420px;
+  overflow: auto;
+}
 
 /* ── SLOPE CHART ── */
 .slope-wrap { overflow-x: auto; }
@@ -628,7 +678,8 @@ body.light #svgTooltip {
 }
 
 /* ── 圖表說明按鈕 ── */
-.chart-info-btn {
+.chart-info-btn,
+.chart-expand-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -648,7 +699,13 @@ body.light #svgTooltip {
   line-height: 1;
   vertical-align: middle;
 }
-.chart-info-btn:hover {
+.chart-expand-btn {
+  border-radius: 5px;
+  font-size: 12px;
+}
+.chart-info-btn:hover,
+.chart-expand-btn:hover,
+.chart-expand-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -816,11 +873,11 @@ body.light .year-range-badge {
 <div id="svgTooltip"></div>
 
 <div class="tab-bar">
-  <button class="tab" onclick="switchTab('D')">
+  <button class="tab active" onclick="switchTab('D')">
     <span>整屆比較</span>
     <span class="tab-label">Cohort Analysis</span>
   </button>
-  <button class="tab active" onclick="switchTab('A')">
+  <button class="tab" onclick="switchTab('A')">
     <span>班級輪廓</span>
     <span class="tab-label">Class Overview</span>
   </button>
@@ -835,7 +892,7 @@ body.light .year-range-badge {
 </div>
 
 <!-- ══ PANEL A ══ -->
-<div class="panel active" id="panelA">
+<div class="panel" id="panelA">
   <div class="filter-bar">
     <span class="filter-label">學期 Semester</span>
     <select id="aFilterSem" onchange="renderA()"></select>
@@ -1063,7 +1120,7 @@ body.light .year-range-badge {
 </div>
 
 <!-- ══ PANEL D ══ -->
-<div class="panel" id="panelD">
+<div class="panel active" id="panelD">
   <div class="filter-bar">
     <span class="filter-label">學制 Program</span>
     <select id="dFilterProgram" onchange="renderD()">
@@ -1296,10 +1353,55 @@ function refreshChartDefaults() {
 }
 
 const charts = {};
+const chartConfigs = {};
+
+function chartUsesCategoryX(config) {
+  const xScale = config.options?.scales?.x;
+  return !xScale?.type || xScale.type === 'category';
+}
+
+function chartDataLength(config) {
+  const labels = config.data?.labels;
+  if (Array.isArray(labels) && labels.length) return labels.length;
+  if (config.type === 'scatter' || !chartUsesCategoryX(config)) return 0;
+  const datasets = config.data?.datasets || [];
+  return datasets.reduce((max, ds) =>
+    Math.max(max, Array.isArray(ds.data) ? ds.data.length : 0), 0);
+}
+
+function estimateChartMinWidth(config, viewportWidth) {
+  const count = chartDataLength(config);
+  if (!count) return Math.max(viewportWidth || 0, 300);
+  const datasets = config.data?.datasets || [];
+  const type = config.type || datasets.find(ds => ds.type)?.type || '';
+  const barLike = type === 'bar' || datasets.some(ds => ds.type === 'bar');
+  const perItem = barLike ? Math.max(46, Math.min(96, 30 + datasets.length * 10)) : 64;
+  return Math.max(viewportWidth || 0, Math.min(110 + count * perItem, 3600));
+}
+
+function prepareScrollableChart(canvas, config) {
+  const wrap = canvas.closest('.chart-wrap');
+  if (!wrap) return;
+  let inner = canvas.parentElement?.classList.contains('chart-scroll-inner')
+    ? canvas.parentElement
+    : null;
+  if (!inner) {
+    inner = document.createElement('div');
+    inner.className = 'chart-scroll-inner';
+    canvas.parentNode.insertBefore(inner, canvas);
+    inner.appendChild(canvas);
+  }
+  const minWidth = estimateChartMinWidth(config, wrap.clientWidth || 0);
+  inner.style.minWidth = `${minWidth}px`;
+}
+
 function mkChart(id, config) {
   if (charts[id]) charts[id].destroy();
   const ctx = document.getElementById(id);
   if (!ctx) return null;
+  config.options = { ...(config.options || {}) };
+  if (config.options.responsive == null) config.options.responsive = true;
+  if (config.options.maintainAspectRatio == null) config.options.maintainAspectRatio = false;
   // 深度注入最新 tooltip 設定
   if (config.options?.plugins?.tooltip &&
       !config.options.plugins.tooltip._custom) {
@@ -1308,8 +1410,11 @@ function mkChart(id, config) {
       ...config.options.plugins.tooltip
     };
   }
+  prepareScrollableChart(ctx, config);
   smoothScaleEdges(config);
   charts[id] = new Chart(ctx, config);
+  chartConfigs[id] = config;
+  requestAnimationFrame(() => attachChartExpandButtons());
   return charts[id];
 }
 
@@ -1569,6 +1674,90 @@ const CHART_INFO = {
   },
 };
 
+function chartTitleActions(titleEl) {
+  let actions = titleEl.querySelector('.chart-title-actions');
+  if (!actions) {
+    actions = document.createElement('span');
+    actions.className = 'chart-title-actions';
+    titleEl.appendChild(actions);
+  }
+  return actions;
+}
+
+function resizeChartsInCard(card) {
+  card.querySelectorAll('canvas[id]').forEach(canvas => {
+    const chart = charts[canvas.id];
+    if (!chart) return;
+    const config = chartConfigs[canvas.id];
+    if (config) prepareScrollableChart(canvas, config);
+    chart.resize();
+  });
+}
+
+function closeExpandedChart() {
+  const card = document.querySelector('.chart-card.chart-expanded');
+  if (!card) return;
+  const btn = card.querySelector('.chart-expand-btn.active');
+  card.classList.remove('chart-expanded');
+  document.body.classList.remove('chart-expanded-open');
+  if (btn) {
+    btn.classList.remove('active');
+    btn.textContent = '⤢';
+    btn.title = '放大圖表';
+    btn.setAttribute('aria-label', '放大圖表');
+  }
+  requestAnimationFrame(() => resizeChartsInCard(card));
+}
+
+function toggleChartExpanded(btn) {
+  const card = btn.closest('.chart-card');
+  if (!card) return;
+  const willOpen = !card.classList.contains('chart-expanded');
+  closeExpandedChart();
+  if (!willOpen) return;
+  card.classList.add('chart-expanded');
+  document.body.classList.add('chart-expanded-open');
+  btn.classList.add('active');
+  btn.textContent = '×';
+  btn.title = '縮小圖表';
+  btn.setAttribute('aria-label', '縮小圖表');
+  requestAnimationFrame(() => resizeChartsInCard(card));
+}
+
+function attachChartExpandButtons() {
+  document.querySelectorAll('.chart-card').forEach(card => {
+    const titleEl = card.querySelector('.chart-title');
+    if (!titleEl || titleEl.querySelector('.chart-expand-btn')) return;
+    const hasChart = card.querySelector('canvas, svg, #heatmapWrap, #boxplotWrap, .slope-wrap');
+    if (!hasChart) return;
+    const btn = document.createElement('button');
+    btn.className = 'chart-expand-btn';
+    btn.type = 'button';
+    btn.textContent = '⤢';
+    btn.title = '放大圖表';
+    btn.setAttribute('aria-label', '放大圖表');
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleChartExpanded(btn);
+    });
+    chartTitleActions(titleEl).appendChild(btn);
+  });
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeExpandedChart();
+});
+
+window.addEventListener('resize', () => {
+  Object.entries(charts).forEach(([id, chart]) => {
+    const canvas = document.getElementById(id);
+    const config = chartConfigs[id];
+    if (!canvas || !config) return;
+    prepareScrollableChart(canvas, config);
+    chart.resize();
+  });
+});
+
 // 建立 info 按鈕並掛載到 chart-title
 function attachInfoButtons() {
   const isMobile = () => window.matchMedia('(hover: none)').matches;
@@ -1607,7 +1796,7 @@ function attachInfoButtons() {
       ${info.use ? `<div style="margin-top:8px;font-size:10px;color:var(--accent3);border-top:1px solid var(--border);padding-top:6px">💡 ${info.use}</div>` : ''}
     `;
 
-    titleEl.appendChild(btn);
+    chartTitleActions(titleEl).appendChild(btn);
     titleEl.appendChild(pop);
 
     // 桌機：hover on btn
@@ -1635,9 +1824,12 @@ function attachInfoButtons() {
   });
 
   // 點擊其他地方關閉所有 popover
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.chart-popover.open').forEach(p => p.classList.remove('open'));
-  });
+  if (!window.__chartInfoGlobalClickBound) {
+    window.__chartInfoGlobalClickBound = true;
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.chart-popover.open').forEach(p => p.classList.remove('open'));
+    });
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1864,10 +2056,13 @@ function init() {
   }
 
   populateFilters();
-  renderA();
-  // 掛載說明按鈕（renderA 完成後 DOM 已就緒）
-  requestAnimationFrame(() => attachInfoButtons());
-  // renderB/C/D 僅在切換至對應頁籤時才執行
+  renderD();
+  // 掛載說明與放大按鈕（renderD 完成後 DOM 已就緒）
+  requestAnimationFrame(() => {
+    attachInfoButtons();
+    attachChartExpandButtons();
+  });
+  // renderA/B/C 僅在切換至對應頁籤時才執行
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3106,13 +3301,18 @@ function renderCorrelation(allClasses) {
 }
 
 function switchTab(tab) {
+  closeExpandedChart();
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['D','A','C','B'][i]===tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel'+tab).classList.add('active');
+  if (tab === 'A') renderA();
   if (tab === 'B') renderB();
   if (tab === 'C') { renderAnomalyDensity(); renderRetakerFirstDist(); }
   if (tab === 'D') renderD();
-  requestAnimationFrame(() => attachInfoButtons());
+  requestAnimationFrame(() => {
+    attachInfoButtons();
+    attachChartExpandButtons();
+  });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3131,8 +3331,11 @@ function toggleTheme() {
     if (tabId === 'B') renderB();
     if (tabId === 'C') { renderAnomalyDensity(); renderRetakerFirstDist(); }
     if (tabId === 'D') renderD();
-    // Re-attach info buttons after re-render
-    requestAnimationFrame(() => attachInfoButtons());
+    // Re-attach chart title buttons after re-render
+    requestAnimationFrame(() => {
+      attachInfoButtons();
+      attachChartExpandButtons();
+    });
   }
 }
 
