@@ -1067,8 +1067,8 @@ body.light .year-range-badge {
       <option value="2yr_gen">二技一般班</option>
       <option value="2yr_work">二技在職</option>
       <option value="2yr_night">二技夜間</option>
-      <option value="4yr">四技</option>
-      <option value="post">學士後護理</option>
+      <option value="4yr">四技一般</option>
+      <option value="post">學士後護</option>
       <option value="retake_class">重修班</option>
       <option value="retake_student">重修生</option>
     </select>
@@ -1102,8 +1102,8 @@ body.light .year-range-badge {
     <span class="program-badge prog-2yr-gen">二技一般</span>
     <span class="program-badge prog-2yr-work">二技在職</span>
     <span class="program-badge prog-2yr-night">二技夜間</span>
-    <span class="program-badge prog-4yr">四技</span>
-    <span class="program-badge prog-post">學士後護理</span>
+    <span class="program-badge prog-4yr">四技一般</span>
+    <span class="program-badge prog-post">學士後護</span>
     <span class="program-badge prog-retake-class">重修班</span>
     <span class="program-badge prog-retake-student">重修生</span>
   </div>
@@ -1664,8 +1664,12 @@ function addSvgTooltip(svgEl, selector, contentFn) {
 // ══════════════════════════════════════════════════════════
 // LOAD DATA
 // ══════════════════════════════════════════════════════════
+const CLASS_LETTER_ORDER = ['A','B','C','D','E'];
+const CLASS_WORK_ORDER = ['甲','乙','戊','己'];
+const CLASS_NIGHT_ORDER = ['丙','丁'];
+
 // ── 資料正規化：清除 sheet_name 的空格、全形字母、名稱變體 ──
-function normalizeSheet(s) {
+function cleanSheetName(s) {
   if (!s) return s;
   s = String(s);
   // NFKC 會將全形英數、全形空白等常見變體轉為標準形式
@@ -1679,6 +1683,117 @@ function normalizeSheet(s) {
   return s;
 }
 
+function classCodeText(s) {
+  const numMap = { '零':'0','〇':'0','一':'1','ㄧ':'1','二':'2','兩':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9' };
+  return cleanSheetName(s)
+    .toUpperCase()
+    .replace(/[零〇一ㄧ二兩三四五六七八九]/g, ch => numMap[ch] ?? ch)
+    .replace(/已/g, '己');
+}
+
+function classInfo(sheetName, semester = '') {
+  const raw = cleanSheetName(sheetName) || '';
+  const code = classCodeText(raw);
+  if (!raw) return { canonical: raw, program: '2yr_gen', order: 9999 };
+
+  if (/重修生/.test(raw)) {
+    return { canonical: '重修生', program: 'retake_student', order: 0 };
+  }
+  if (/重修|暑期|學分|補修|微免|遠距|R\d/i.test(raw) || /R\d/i.test(code)) {
+    const canonical = /(?:護|N|日)?[24]\d/.test(code) ? code.replace(/^日/, '護').replace(/^N/, '護') : raw;
+    return { canonical, program: 'retake_class', order: 5000 };
+  }
+  if (/學後護|學士後|學後/.test(raw)) {
+    return { canonical: '學士後護', program: 'post', order: 0 };
+  }
+
+  let m = code.match(/(?:護|N|日)?2([1-9])([A-E])/i);
+  if (m) {
+    const section = m[2].toUpperCase();
+    return {
+      canonical: `護2${m[1]}${section}`,
+      program: '2yr_gen',
+      order: Number(m[1]) * 10 + CLASS_LETTER_ORDER.indexOf(section)
+    };
+  }
+
+  m = code.match(/(?:護|日|N)?2([1-9])([甲乙丙丁戊己])/);
+  if (m) {
+    const section = m[2];
+    const isNight = CLASS_NIGHT_ORDER.includes(section);
+    const orderSet = isNight ? CLASS_NIGHT_ORDER : CLASS_WORK_ORDER;
+    return {
+      canonical: `護2${m[1]}${section}`,
+      program: isNight ? '2yr_night' : '2yr_work',
+      order: Number(m[1]) * 10 + orderSet.indexOf(section)
+    };
+  }
+
+  m = code.match(/(?:護|N)?4([1-9])([A-D])/i);
+  if (m) {
+    const section = m[2].toUpperCase();
+    return {
+      canonical: `護4${m[1]}${section}`,
+      program: '4yr',
+      order: Number(m[1]) * 10 + CLASS_LETTER_ORDER.indexOf(section)
+    };
+  }
+
+  const semType = semester ? String(semester).slice(-1) : '';
+  return {
+    canonical: raw,
+    program: semType === '2' ? '4yr' : '2yr_gen',
+    order: 9000
+  };
+}
+
+function normalizeSheet(s) {
+  return classInfo(s).canonical;
+}
+
+function programOrderIndex(program) {
+  const idx = PROGRAM_ORDER.indexOf(program);
+  return idx >= 0 ? idx : 99;
+}
+
+function compareSheetNames(a, b) {
+  const ia = classInfo(a), ib = classInfo(b);
+  const programOrder = programOrderIndex(ia.program) - programOrderIndex(ib.program);
+  if (programOrder !== 0) return programOrder;
+  if (ia.order !== ib.order) return ia.order - ib.order;
+  return ia.canonical.localeCompare(ib.canonical, 'zh-TW', { numeric: true });
+}
+
+function compareClassRecords(a, b) {
+  return a.semester.localeCompare(b.semester)
+    || compareSheetNames(a.sheet_name, b.sheet_name)
+    || (a.type || '').localeCompare(b.type || '');
+}
+
+function mergeClassSummary(target, source) {
+  const weightedFields = ['avg_midterm', 'avg_final', 'avg_semester', 'pass_rate', 'retaker_rate'];
+  const sameSummary = target.count === source.count
+    && weightedFields.every(k => target[k] === source[k]);
+
+  if (!sameSummary) {
+    const countA = Number(target.count) || 0;
+    const countB = Number(source.count) || 0;
+    const total = countA + countB;
+    weightedFields.forEach(k => {
+      if (target[k] == null) target[k] = source[k] ?? null;
+      else if (source[k] != null && total > 0) target[k] = +(((target[k] * countA) + (source[k] * countB)) / total).toFixed(2);
+    });
+    if (Array.isArray(target.score_distribution) && Array.isArray(source.score_distribution)) {
+      target.score_distribution = target.score_distribution.map((v, i) => v + (source.score_distribution[i] || 0));
+    }
+    target.count = total || target.count || source.count;
+  }
+
+  Object.keys(source).forEach(k => {
+    if (target[k] == null && source[k] != null) target[k] = source[k];
+  });
+}
+
 function normalizeData() {
   // 1. 正規化 class_summary 的 key 與 sheet_name
   const newCS = {};
@@ -1686,11 +1801,9 @@ function normalizeData() {
     const normName = normalizeSheet(val.sheet_name);
     val.sheet_name = normName;
     const normKey = `${val.semester}_${normName}`;
-    // 若已有相同 key，合併（後者覆蓋，保留非 null 值）
+    // 若已有相同 key，代表同班不同寫法，合併為同一班級
     if (newCS[normKey]) {
-      for (const k of Object.keys(val)) {
-        if (val[k] != null) newCS[normKey][k] = val[k];
-      }
+      mergeClassSummary(newCS[normKey], val);
     } else {
       newCS[normKey] = val;
     }
@@ -1750,17 +1863,13 @@ function semLabel(s) {
 // 依規定學制順序排序程式碼 key
 function sortPrograms(progs) {
   return [...progs].sort((a, b) =>
-    (PROGRAM_ORDER.indexOf(a) + 1 || 99) - (PROGRAM_ORDER.indexOf(b) + 1 || 99)
+    programOrderIndex(a) - programOrderIndex(b)
   );
 }
 
 // 依規定學制順序排序班級名稱（先依學制，再依字母）
 function sortSheetNames(names) {
-  return [...new Set(names.map(normalizeSheet).filter(Boolean))].sort((a, b) => {
-    const pa = classifyProgram(a, ''), pb = classifyProgram(b, '');
-    const oi = (PROGRAM_ORDER.indexOf(pa) + 1 || 99) - (PROGRAM_ORDER.indexOf(pb) + 1 || 99);
-    return oi !== 0 ? oi : a.localeCompare(b, 'zh-TW');
-  });
+  return [...new Set(names.map(normalizeSheet).filter(Boolean))].sort(compareSheetNames);
 }
 
 function populateFilters() {
@@ -1982,19 +2091,21 @@ function getRetakerRecords() {
         if (!bySheet[r.sheet_name]) bySheet[r.sheet_name] = [];
         bySheet[r.sheet_name].push(r);
       });
-      for (const [sh, shRecs] of Object.entries(bySheet)) {
+      for (const [sh, shRecs] of Object.entries(bySheet).sort(([a], [b]) => compareSheetNames(a, b))) {
         if (shRecs.length >= 2) {
-          const sorted = shRecs.sort((a,b) => a.semester.localeCompare(b.semester));
+          const sorted = [...shRecs].sort(compareClassRecords);
           retakers.push({ sid, masked: data.name_masked, recs: sorted, sheet: sh });
         }
       }
     } else {
       // All retaker records regardless of sheet
-      const sorted = recs.sort((a,b) => a.semester.localeCompare(b.semester));
+      const sorted = [...recs].sort(compareClassRecords);
       retakers.push({ sid, masked: data.name_masked, recs: sorted, sheet: '全部' });
     }
   }
-  return retakers;
+  return retakers.sort((a, b) =>
+    compareSheetNames(a.sheet, b.sheet) || a.masked.localeCompare(b.masked, 'zh-TW')
+  );
 }
 
 function renderB() {
@@ -2277,7 +2388,7 @@ function renderProfile(sid) {
 
   // Timeline
   html += '<div class="timeline">';
-  const sorted = [...data.records].sort((a,b) => a.semester.localeCompare(b.semester));
+  const sorted = [...data.records].sort(compareClassRecords);
   sorted.forEach(r => {
     const typeLabel = r.type === 'theory' ? 'Theory' : r.type === 'practicum' ? 'Practicum' : 'Summer';
     const scoreColor = (s) => s == null ? '' : s >= 60 ? 'pass' : 'fail';
@@ -2551,7 +2662,7 @@ function renderRetakerFirstDist() {
   Object.values(DATA.students).forEach(s=>{
     const retakerRecs = s.records.filter(r=>r.is_retaker);
     if (!retakerRecs.length) return;
-    const sorted = [...retakerRecs].sort((a,b)=>a.semester.localeCompare(b.semester));
+    const sorted = [...retakerRecs].sort(compareClassRecords);
     const first = sorted[0].semester_score;
     if (first==null) return;
     const b = Math.min(Math.floor(first/10), 10);
@@ -2648,7 +2759,7 @@ function renderFirstVsDelta() {
   const type = document.getElementById('bFilterType').value;
   const pts=[];
   Object.values(DATA.students).forEach(s=>{
-    const recs=[...s.records.filter(r=>r.is_retaker&&r.type===type)].sort((a,b)=>a.semester.localeCompare(b.semester));
+    const recs=[...s.records.filter(r=>r.is_retaker&&r.type===type)].sort(compareClassRecords);
     if(recs.length<2) return;
     const first=recs[0].semester_score;
     recs.slice(1).forEach(r=>{ if(r.delta!=null&&first!=null) pts.push({x:first,y:r.delta,m:s.name_masked}); });
@@ -2915,30 +3026,7 @@ function toggleTheme() {
 // 學制分類器 Program Classifier
 // ══════════════════════════════════════════════════════════
 function classifyProgram(sheetName, semester) {
-  const s = normalizeSheet(sheetName) || '';
-
-  // 重修班（任務型開設，sheet_name 必含「重修」）
-  if (/重修/.test(s)) return 'retake_class';
-
-  // 學士後護（含「學後護」「學士後」等多種寫法）
-  if (/學後護|學士後/.test(s)) return 'post';
-
-  // 四技：護41A-D 或 護四一A-D
-  if (/護4[1-9][A-Da-d]|護四[一二三四][A-Da-d]/.test(s)) return '4yr';
-
-  // 二技夜間：丙、丁班
-  if (/[丙丁]/.test(s)) return '2yr_night';
-
-  // 二技在職：甲、乙、戊、己班
-  if (/[甲乙戊己]/.test(s)) return '2yr_work';
-
-  // 二技一般：護21A-E 或 護二一A-E 或 N21A-E 或 日21A-E
-  if (/護2[1-9][A-Ea-e]|護二[一二][A-Ea-e]|N2[1-9][A-Ea-e]|日2[1-9][A-Ea-e]/i.test(s)) return '2yr_gen';
-
-  // fallback：仍用學期推斷（上學期→二技，下學期→四技）
-  const semType = semester ? semester.slice(-1) : '';
-  if (semType === '2') return '4yr';
-  return '2yr_gen';
+  return classInfo(sheetName, semester).program;
 }
 
 // 學制順序：二技一般 → 二技在職 → 二技夜間 → 四技一般 → 學士後護 → 重修班 → 重修生
@@ -2948,8 +3036,8 @@ const PROGRAM_LABELS = {
   '2yr_gen':        '二技一般',
   '2yr_work':       '二技在職',
   '2yr_night':      '二技夜間',
-  '4yr':            '四技',
-  'post':           '學士後護理',
+  '4yr':            '四技一般',
+  'post':           '學士後護',
   'retake_class':   '重修班',
   'retake_student': '重修生',
 };
@@ -3317,7 +3405,7 @@ function renderDPassRate(allClasses, sems, filterProg) {
 function renderDTable(filtered) {
   const tbody = document.getElementById('dDetailBody');
   const rows = [...filtered].sort((a, b) =>
-    a.semester.localeCompare(b.semester) || a.sheet_name.localeCompare(b.sheet_name)
+    a.semester.localeCompare(b.semester) || compareSheetNames(a.sheet_name, b.sheet_name)
   );
   tbody.innerHTML = rows.map((c, i) => `
     <tr style="background:${i%2?'var(--surface2)':'var(--surface)'}">
