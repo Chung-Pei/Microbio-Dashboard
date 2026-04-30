@@ -1262,14 +1262,26 @@ const CHART_DEFAULTS = {
   scales: {
     x: {
       ticks: { color: '#6b748f', font: { size: 10 } },
-      grid:  { color: '#1c2030' },
+      grid:  { color: '#1c2030', drawTicks: false, tickLength: 0 },
+      border: { display: false },
     },
     y: {
       ticks: { color: '#6b748f', font: { size: 10 } },
-      grid:  { color: '#242840' },
+      grid:  { color: '#242840', drawTicks: false, tickLength: 0 },
+      border: { display: false },
     }
   }
 };
+
+function smoothScaleEdges(config) {
+  const scales = config.options?.scales;
+  if (!scales) return;
+  Object.values(scales).forEach(scale => {
+    if (!scale || typeof scale !== 'object') return;
+    scale.grid = { ...(scale.grid || {}), drawTicks: false, tickLength: 0 };
+    scale.border = { ...(scale.border || {}), display: false };
+  });
+}
 
 // 重新渲染圖表時刷新 tooltip 色系
 function refreshChartDefaults() {
@@ -1296,6 +1308,7 @@ function mkChart(id, config) {
       ...config.options.plugins.tooltip
     };
   }
+  smoothScaleEdges(config);
   charts[id] = new Chart(ctx, config);
   return charts[id];
 }
@@ -2283,7 +2296,7 @@ function renderSlope(retakers) {
   for (let v = Math.ceil(minS/10)*10; v <= maxS; v+=10) {
     const y = scaleY(v);
     svgHtml += `
-      <line x1="${x1-5}" y1="${y}" x2="${x2+5}" y2="${y}" stroke="${gridCol}" stroke-width="1"/>
+      <line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${gridCol}" stroke-width="1"/>
       <text x="${x1-8}" y="${y+4}" text-anchor="end" fill="${dimCol}" font-size="9">${v}</text>
     `;
   }
