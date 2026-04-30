@@ -804,6 +804,36 @@ body.light .year-range-badge {
   background: rgba(46,110,219,0.10);
   border-color: rgba(46,110,219,0.25);
 }
+.subject-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  color: var(--text-dim);
+}
+.subject-field span {
+  font-size: 10px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.subject-input {
+  min-width: 110px;
+  width: 110px;
+  background: rgba(79,142,247,0.12);
+  border: 1px solid rgba(79,142,247,0.25);
+  border-radius: 20px;
+  color: var(--accent);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+}
+.subject-input::placeholder { color: var(--text-dim); font-weight: 400; }
+body.light .subject-input {
+  background: rgba(46,110,219,0.10);
+  border-color: rgba(46,110,219,0.25);
+}
 
 /* ── 深淺模式切換按鈕 ── */
 .theme-toggle {
@@ -872,9 +902,9 @@ body.light .year-range-badge {
   <div class="header-sep"></div>
   <div class="header-title">學習分析儀表板</div>
   <span class="year-range-badge" id="yearRangeBadge">—</span>
-  <div class="header-meta" id="subjectMeta" style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-    <span style="font-size:10px;opacity:0.6;white-space:nowrap">科目</span>
-    <input id="subjectInput" type="text" placeholder="輸入科目名稱" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font-size:11px;width:110px;outline:none" oninput="updateSubjectDisplay()">
+  <div class="subject-field" id="subjectMeta">
+    <span>科目</span>
+    <input class="subject-input" id="subjectInput" type="text" placeholder="輸入科目名稱" oninput="updateSubjectDisplay()">
   </div>
   <div class="header-meta" id="metaInfo">載入中...</div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深/淺色模式">🌙</button>
@@ -1349,10 +1379,47 @@ function getTooltipStyle() {
   };
 }
 
+function cssColor(name, fallback) {
+  const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function chartTextColor() {
+  return cssColor('--text', document.body.classList.contains('light') ? '#1a1d2e' : '#dde3f5');
+}
+
+function chartTextDimColor() {
+  return cssColor('--text-dim', document.body.classList.contains('light') ? '#6b748f' : '#9aa0b8');
+}
+
+function resolveChartColor(value, fallback = chartTextDimColor()) {
+  if (typeof value !== 'string') return value;
+  const match = value.trim().match(/^var\((--[\w-]+)(?:,\s*([^)]+))?\)$/);
+  if (!match) return value;
+  return cssColor(match[1], match[2]?.trim() || fallback);
+}
+
+function normalizeChartThemeColors(config) {
+  const options = config.options || {};
+  if (options.color) options.color = resolveChartColor(options.color, chartTextColor());
+  const plugins = options.plugins || {};
+  ['legend', 'title', 'subtitle'].forEach(key => {
+    const plugin = plugins[key];
+    if (!plugin || typeof plugin !== 'object') return;
+    if (plugin.color) plugin.color = resolveChartColor(plugin.color);
+    if (plugin.labels?.color) plugin.labels.color = resolveChartColor(plugin.labels.color);
+  });
+  Object.values(options.scales || {}).forEach(scale => {
+    if (!scale || typeof scale !== 'object') return;
+    if (scale.ticks?.color) scale.ticks.color = resolveChartColor(scale.ticks.color);
+    if (scale.title?.color) scale.title.color = resolveChartColor(scale.title.color);
+  });
+}
+
 const CHART_DEFAULTS = {
-  color: '#dde3f5',
+  color: chartTextColor(),
   plugins: {
-    legend: { labels: { color: '#9aa0b8', font: { size: 11 } } },
+    legend: { labels: { color: chartTextDimColor(), font: { size: 11 } } },
     tooltip: getTooltipStyle(),
   },
   scales: {
@@ -1383,8 +1450,9 @@ function smoothScaleEdges(config) {
 function refreshChartDefaults() {
   const ts = getTooltipStyle();
   const light = document.body.classList.contains('light');
+  CHART_DEFAULTS.color = chartTextColor();
   CHART_DEFAULTS.plugins.tooltip = ts;
-  CHART_DEFAULTS.plugins.legend.labels.color = light ? '#4a5070' : '#9aa0b8';
+  CHART_DEFAULTS.plugins.legend.labels.color = chartTextDimColor();
   CHART_DEFAULTS.scales.x.ticks.color = light ? '#6b748f' : '#6b748f';
   CHART_DEFAULTS.scales.x.grid.color  = light ? '#e0e4f0' : '#1c2030';
   CHART_DEFAULTS.scales.y.ticks.color = light ? '#6b748f' : '#6b748f';
@@ -1523,6 +1591,7 @@ function mkChart(id, config) {
   }
   prepareScrollableChart(ctx, config);
   smoothScaleEdges(config);
+  normalizeChartThemeColors(config);
   charts[id] = new Chart(ctx, config);
   chartConfigs[id] = config;
   observeChartWrap(ctx);
@@ -3464,6 +3533,7 @@ function toggleTheme() {
     const btn = document.getElementById('themeToggle');
     if (btn) btn.textContent = '🌞';
   }
+  refreshChartDefaults();
 })();
 
 // ══════════════════════════════════════════════════════════
