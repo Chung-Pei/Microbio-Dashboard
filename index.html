@@ -4236,24 +4236,22 @@ function withPrintablePanelsVisible(task) {
     p.style.pointerEvents = 'none';
   });
   try {
-    task();
+    return task();
   } finally {
     originals.forEach(({ el, ...style }) => Object.assign(el.style, style));
   }
 }
 
-function preparePrintCharts() {
+function renderPrintCharts() {
   if (!DATA) return;
-  withPrintablePanelsVisible(() => {
-    renderD();
-    renderA();
-    renderB();
-    renderAnomalyDensity();
-    renderRetakerFirstDist();
-    Object.values(charts).forEach(chart => {
-      chart.resize();
-      chart.update('none');
-    });
+  renderD();
+  renderA();
+  renderB();
+  renderAnomalyDensity();
+  renderRetakerFirstDist();
+  Object.values(charts).forEach(chart => {
+    chart.resize();
+    chart.update('none');
   });
 }
 
@@ -4276,6 +4274,15 @@ function getPrintableItemHTML(item) {
   const canvas = document.getElementById(item.id);
   if (!canvas) return title + empty;
   try {
+    const chart = charts[item.id];
+    if (chart) {
+      const config = chartConfigs[item.id];
+      if (config) prepareScrollableChart(canvas, config);
+      chart.stop();
+      chart.resize();
+      chart.update('none');
+      chart.render();
+    }
     const dataUrl = canvas.toDataURL('image/png');
     return title + `<img src="${dataUrl}" style="width:100%;height:auto;display:block" />`;
   } catch(e) {
@@ -4284,6 +4291,14 @@ function getPrintableItemHTML(item) {
 }
 
 function buildPrintHTML(items) {
+  let itemHtml = '';
+  withPrintablePanelsVisible(() => {
+    renderPrintCharts();
+    itemHtml = items.map(item =>
+      `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">${getPrintableItemHTML(item)}</div>`
+    ).join('');
+  });
+
   let html = `<div style="font-family:sans-serif;background:#fff;color:#000;padding:20px">
     <div style="border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px">
       <h1 style="font-size:18px;margin:0">學習分析儀表板</h1>`;
@@ -4292,10 +4307,7 @@ function buildPrintHTML(items) {
   const meta = document.getElementById('metaInfo')?.textContent;
   if (meta) html += `<div style="font-size:11px;color:#888;margin-top:2px">${escapeHtml(meta)}</div>`;
   html += `</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px">`;
-
-  items.forEach(item => {
-    html += `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">${getPrintableItemHTML(item)}</div>`;
-  });
+  html += itemHtml;
   html += `</div></div>`;
   return html;
 }
@@ -4303,7 +4315,6 @@ function buildPrintHTML(items) {
 function doPrintPreview() {
   const items = getSelectedPrintItems();
   if (!items.length) { alert('請至少選擇一個圖表'); return; }
-  preparePrintCharts();
   const area = document.getElementById('printPreviewArea');
   const content = document.getElementById('printPreviewContent');
   content.innerHTML = buildPrintHTML(items);
@@ -4314,7 +4325,6 @@ function doPrintPreview() {
 function doPrint() {
   const items = getSelectedPrintItems();
   if (!items.length) { alert('請至少選擇一個圖表'); return; }
-  preparePrintCharts();
   const html = buildPrintHTML(items);
 
   // Try window.print() approach first
