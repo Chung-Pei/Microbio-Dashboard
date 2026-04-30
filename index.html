@@ -911,7 +911,11 @@ body.light .year-range-badge {
     <div class="chart-card">
       <div class="chart-title" style="--accent-color:var(--accent4)">
         <div class="dot"></div>與前次同班比較 Δ vs Previous Semester
-        <span style="color:var(--text-dim);font-size:9px;margin-left:4px">— 綠色為進步，紅色為退步</span>
+        <span style="color:var(--text-dim);font-size:9px;margin-left:4px">— 自動尋找上一個有同班資料的學期</span>
+      </div>
+      <div class="filter-bar" style="padding:8px 0;background:none;border:none;margin-bottom:6px">
+        <span class="filter-label">比較基準 Compare</span>
+        <select id="aCompareSem" onchange="renderVarianceBar(document.getElementById('aFilterSem').value, document.getElementById('aFilterSheet').value)"></select>
       </div>
       <div class="chart-wrap" style="height:220px">
         <canvas id="chartVariance"></canvas>
@@ -1800,8 +1804,9 @@ function normalizeData() {
   for (const [key, val] of Object.entries(DATA.class_summary)) {
     const normName = normalizeSheet(val.sheet_name);
     val.sheet_name = normName;
-    const normKey = `${val.semester}_${normName}`;
-    // 若已有相同 key，代表同班不同寫法，合併為同一班級
+    const normType = val.type || 'all';
+    const normKey = `${val.semester}_${normName}_${normType}`;
+    // 若已有相同 key，代表同班同課別的不同寫法，合併為同一班級
     if (newCS[normKey]) {
       mergeClassSummary(newCS[normKey], val);
     } else {
@@ -1906,14 +1911,94 @@ function updateSheetFilter() {
   return el.value || sheets[0] || '';
 }
 
+function cloneClassSummary(c) {
+  return {
+    ...c,
+    score_distribution: Array.isArray(c.score_distribution) ? [...c.score_distribution] : c.score_distribution
+  };
+}
+
+function aggregateClassSummaries(rows, sem, sheet, type = 'all') {
+  if (!rows.length) return null;
+  const total = rows.reduce((a, c) => a + (Number(c.count) || 0), 0);
+  const first = cloneClassSummary(rows[0]);
+  first.semester = sem;
+  first.sheet_name = normalizeSheet(sheet);
+  first.type = type;
+  first.count = total || rows.reduce((a, c) => a + (c.count || 0), 0);
+
+  ['avg_midterm', 'avg_final', 'avg_semester', 'pass_rate', 'retaker_rate'].forEach(field => {
+    const weighted = rows
+      .filter(c => c[field] != null)
+      .reduce((acc, c) => {
+        const w = Number(c.count) || 1;
+        acc.sum += c[field] * w;
+        acc.weight += w;
+        return acc;
+      }, { sum: 0, weight: 0 });
+    first[field] = weighted.weight ? +(weighted.sum / weighted.weight).toFixed(2) : null;
+  });
+
+  if (rows.some(c => Array.isArray(c.score_distribution))) {
+    first.score_distribution = Array(11).fill(0);
+    rows.forEach(c => {
+      if (!Array.isArray(c.score_distribution)) return;
+      c.score_distribution.forEach((v, i) => { first.score_distribution[i] += v || 0; });
+    });
+  }
+
+  return first;
+}
+
+function getClassSummary(sem, sheet, type = 'all') {
+  const normSheet = normalizeSheet(sheet);
+  const rows = Object.values(DATA.class_summary).filter(c =>
+    c.semester === sem &&
+    c.sheet_name === normSheet &&
+    (type === 'all' || c.type === type)
+  );
+  if (!rows.length) return null;
+  return rows.length === 1 ? cloneClassSummary(rows[0]) : aggregateClassSummaries(rows, sem, normSheet, type);
+}
+
+function recordMatchesClass(r, sem, sheet, type = 'all') {
+  return r.semester === sem &&
+    normalizeSheet(r.sheet_name) === normalizeSheet(sheet) &&
+    (type === 'all' || r.type === type);
+}
+
+function availableCompareSems(sem, sheet, type = 'all') {
+  const sems = DATA.meta.semesters;
+  const idx = sems.indexOf(sem);
+  if (idx <= 0) return [];
+  return sems
+    .slice(0, idx)
+    .reverse()
+    .filter(prevSem => getClassSummary(prevSem, sheet, type));
+}
+
+function updateCompareFilter(sem, sheet, type = 'all') {
+  const el = document.getElementById('aCompareSem');
+  if (!el) return '';
+  const candidates = availableCompareSems(sem, sheet, type);
+  const prev = el.value || 'auto';
+  el.innerHTML = [
+    `<option value="auto">自動：上一個有資料</option>`,
+    ...candidates.map(s => `<option value="${s}">${semLabel(s)}</option>`)
+  ].join('');
+  if (prev !== 'auto' && candidates.includes(prev)) el.value = prev;
+  else el.value = 'auto';
+  return el.value;
+}
+
 // ══════════════════════════════════════════════════════════
 // PANEL A
 // ══════════════════════════════════════════════════════════
 function renderA() {
   const sheet = updateSheetFilter();  // 修正 B2：直接使用回傳值，避免時序問題
   const sem   = document.getElementById('aFilterSem').value;
-  const key   = `${sem}_${sheet}`;
-  const cls   = DATA.class_summary[key];
+  const type  = document.getElementById('aFilterType').value;
+  const cls   = getClassSummary(sem, sheet, type);
 
   if (!cls) {
     document.getElementById('aStats').innerHTML = '<div class="empty-state">無此班次資料</div>';
@@ -2009,16 +2094,17 @@ function renderA() {
   });
 
   renderTrend();
-  renderNormalOverlay(cls);
-  renderRegression(sem, sheet);
+  renderNormalOverlay(cls, sem, sheet, type);
+  renderRegression(sem, sheet, type);
   renderVarianceBar(sem, sheet);
 }
 
 function renderTrend() {
   const sheetName = document.getElementById('aTrendSheet').value;
-  const relevant = Object.values(DATA.class_summary)
-    .filter(c => c.sheet_name === sheetName)
-    .sort((a, b) => a.semester.localeCompare(b.semester));
+  const type = document.getElementById('aFilterType')?.value || 'all';
+  const relevant = DATA.meta.semesters
+    .map(sem => getClassSummary(sem, sheetName, type))
+    .filter(Boolean);
 
   if (relevant.length === 0) return;
 
@@ -2471,15 +2557,14 @@ function renderProfile(sid) {
 // ══════════════════════════════════════════════════════════
 
 // A1: 常態分布曲線疊加
-function renderNormalOverlay(cls) {
+function renderNormalOverlay(cls, sem, sheet, type = 'all') {
   if (!cls) return;
   const dist = cls.score_distribution; // 11 bins: 0-9,...,100
   const n = cls.count || 1;
   const mu = cls.avg_semester || 70;
   const scores = [];
   Object.values(DATA.students).forEach(s => s.records.forEach(r => {
-    if (r.semester === document.getElementById('aFilterSem').value &&
-        r.sheet_name === document.getElementById('aFilterSheet').value &&
+    if (recordMatchesClass(r, sem, sheet, type) &&
         r.semester_score != null) scores.push(r.semester_score);
   }));
   const sd = scores.length > 1
@@ -2516,10 +2601,10 @@ function renderNormalOverlay(cls) {
 }
 
 // A2: 期中 → 期末 線性迴歸
-function renderRegression(sem, sheet) {
+function renderRegression(sem, sheet, type = 'all') {
   const pts = [];
   Object.values(DATA.students).forEach(s => s.records.forEach(r => {
-    if (r.semester===sem && r.sheet_name===sheet && r.midterm!=null && r.final!=null)
+    if (recordMatchesClass(r, sem, sheet, type) && r.midterm!=null && r.final!=null)
       pts.push({ x: r.midterm, y: r.final, m: s.name_masked });
   }));
   if (pts.length < 3) { document.getElementById('aRsqLabel').textContent=''; return; }
@@ -2577,25 +2662,43 @@ function renderRegression(sem, sheet) {
 
 // A3: 與前次同班比較 Variance Bar
 function renderVarianceBar(sem, sheet) {
-  const sems = DATA.meta.semesters;
-  const idx  = sems.indexOf(sem);
-  if (idx <= 0) {
-    mkChart('chartVariance',{type:'bar',data:{labels:[],datasets:[]},options:{...CHART_DEFAULTS,plugins:{...CHART_DEFAULTS.plugins,legend:{display:false}}}});
-    return;
-  }
-  const prevSem = sems[idx-1];
-  const cur  = DATA.class_summary[`${sem}_${sheet}`];
-  const prev = DATA.class_summary[`${prevSem}_${sheet}`];
+  const type = document.getElementById('aFilterType')?.value || 'all';
+  const selectedCompare = updateCompareFilter(sem, sheet, type);
+  const candidates = availableCompareSems(sem, sheet, type);
+  const prevSem = selectedCompare !== 'auto' ? selectedCompare : candidates[0];
+  const cur = getClassSummary(sem, sheet, type);
+  const prev = prevSem ? getClassSummary(prevSem, sheet, type) : null;
+
   if (!cur || !prev) {
-    mkChart('chartVariance',{type:'bar',data:{labels:['無前期同班資料'],datasets:[{data:[0],backgroundColor:'rgba(107,116,143,0.3)'}]},options:{...CHART_DEFAULTS,plugins:{...CHART_DEFAULTS.plugins,legend:{display:false}}}});
+    mkChart('chartVariance', {
+      type:'bar',
+      data:{labels:['無可比較資料'],datasets:[{
+        label:'No comparison data',
+        data:[0],
+        backgroundColor:['rgba(107,116,143,0.25)'],
+        borderColor:['rgba(107,116,143,0.55)'],
+        borderWidth:1,
+        borderRadius:4
+      }]},
+      options:{...CHART_DEFAULTS,
+        plugins:{...CHART_DEFAULTS.plugins,legend:{display:false},
+          subtitle:{display:true,text:'目前班級沒有較早且同課別的同班資料',color:'var(--text-dim)',font:{size:10}}},
+        scales:{
+          x:{...CHART_DEFAULTS.scales.x},
+          y:{...CHART_DEFAULTS.scales.y,min:0,max:1,ticks:{display:false},grid:{display:false}}
+        }
+      }
+    });
     return;
   }
+
   const metrics = ['avg_midterm','avg_final','avg_semester','pass_rate'];
   const mLabels = ['期中均分','期末均分','學期均分','及格率×100'];
   const deltas  = metrics.map((m,i)=>{
     const c = cur[m]??0, p = prev[m]??0;
     return i===3 ? +((c-p)*100).toFixed(1) : +(c-p).toFixed(1);
   });
+  const typeLabel = type === 'all' ? '全部課別' : (type === 'practicum' ? '實驗課' : '正課');
 
   mkChart('chartVariance',{
     type:'bar',
@@ -2608,12 +2711,19 @@ function renderVarianceBar(sem, sheet) {
     }]},
     options:{ ...CHART_DEFAULTS,
       plugins:{ ...CHART_DEFAULTS.plugins, legend:{display:false},
+        subtitle:{display:true,text:`${semLabel(sem)} ${normalizeSheet(sheet)}（${typeLabel}） vs ${semLabel(prevSem)}`,color:'var(--text-dim)',font:{size:10}},
         tooltip:{...CHART_DEFAULTS.plugins.tooltip,
-          callbacks:{label:ctx=>`Δ ${ctx.raw>=0?'+':''}${ctx.raw}`}} },
+          callbacks:{label:ctx=>{
+            const i = ctx.dataIndex;
+            const metric = metrics[i];
+            const curVal = metric === 'pass_rate' && cur[metric] != null ? (cur[metric]*100).toFixed(1) : cur[metric];
+            const prevVal = metric === 'pass_rate' && prev[metric] != null ? (prev[metric]*100).toFixed(1) : prev[metric];
+            return `${prevVal ?? '–'} → ${curVal ?? '–'}，Δ ${ctx.raw>=0?'+':''}${ctx.raw}`;
+          }}} },
       scales:{
         x:{ ...CHART_DEFAULTS.scales.x },
         y:{ ...CHART_DEFAULTS.scales.y,
-          title:{display:true,text:'相對上學期變化量',color:'var(--text-dim)'} }
+          title:{display:true,text:'相對比較基準變化量',color:'var(--text-dim)'} }
       }
     }
   });
