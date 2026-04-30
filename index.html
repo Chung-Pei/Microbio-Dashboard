@@ -1861,8 +1861,9 @@ function init() {
 // FILTERS
 // ══════════════════════════════════════════════════════════
 function semLabel(s) {
-  const y = s.slice(0,3), t = s.slice(3);
-  return `${y} 學年 ${t==='1'?'上':'下'}學期`;
+  if (!s) return '';
+  const y = String(s).slice(0,3), t = String(s).slice(3);
+  return `${y}(${t})`;
 }
 
 // 依規定學制順序排序程式碼 key
@@ -2956,7 +2957,7 @@ function renderHeatmap(filtered) {
   let svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" style="display:block">`;
   svg+=`<rect width="${W}" height="${H}" fill="${bgCol}" rx="8"/>`;
   sems.forEach((s,i)=>{
-    svg+=`<text x="${labelW+i*cellW+cellW/2}" y="${headerH-8}" text-anchor="middle" fill="${dimCol}" font-size="9" font-family="monospace">${s.slice(0,3)}(${s.slice(3)})</text>`;
+    svg+=`<text x="${labelW+i*cellW+cellW/2}" y="${headerH-8}" text-anchor="middle" fill="${dimCol}" font-size="9" font-family="monospace">${semLabel(s)}</text>`;
   });
   classes.forEach((cls,ri)=>{
     const y=headerH+ri*cellH;
