@@ -910,6 +910,17 @@ body.light .subject-input {
   letter-spacing: .06em;
   margin-bottom: 12px;
 }
+.print-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.print-options .filter-label { margin-right: -2px; }
+.print-options select { min-width: 96px; }
 .print-group {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1379,6 +1390,12 @@ body.light .subject-input {
     <!-- 選擇要列印的圖表 -->
     <div class="print-selection-box">
       <div class="print-selection-title">選擇列印項目</div>
+      <div class="print-options">
+        <span class="filter-label">輸出年份 From</span>
+        <select id="printYearStart" onchange="syncPrintYearRange()"></select>
+        <span class="filter-label">到 To</span>
+        <select id="printYearEnd" onchange="syncPrintYearRange()"></select>
+      </div>
       <div id="printSelections" class="print-group"></div>
       <div id="printSummary" class="print-summary"></div>
     </div>
@@ -4171,6 +4188,51 @@ const PRINT_ITEMS = [
 
 const PRINT_TAB_LABELS = { D: '整屆', A: '班級', C: '個案', B: '重修' };
 
+function printYears() {
+  if (!DATA?.meta?.semesters?.length) return [];
+  return [...new Set(DATA.meta.semesters.map(s => String(s).slice(0, 3)))].sort();
+}
+
+function populatePrintYearFilters() {
+  const start = document.getElementById('printYearStart');
+  const end = document.getElementById('printYearEnd');
+  if (!start || !end) return;
+  const years = printYears();
+  const options = years.map(y => `<option value="${y}">${y} 年</option>`).join('');
+  const prevStart = start.value;
+  const prevEnd = end.value;
+  start.innerHTML = options;
+  end.innerHTML = options;
+  start.value = years.includes(prevStart) ? prevStart : years[0] || '';
+  end.value = years.includes(prevEnd) ? prevEnd : years[years.length - 1] || '';
+  syncPrintYearRange();
+}
+
+function syncPrintYearRange() {
+  const start = document.getElementById('printYearStart');
+  const end = document.getElementById('printYearEnd');
+  if (!start || !end || !start.value || !end.value) return;
+  if (Number(start.value) > Number(end.value)) {
+    if (document.activeElement === start) end.value = start.value;
+    else start.value = end.value;
+  }
+}
+
+function getPrintYearRange() {
+  const years = printYears();
+  const start = document.getElementById('printYearStart')?.value || years[0] || '';
+  const end = document.getElementById('printYearEnd')?.value || years[years.length - 1] || '';
+  return { start, end };
+}
+
+function getPrintSemesters() {
+  const { start, end } = getPrintYearRange();
+  return (DATA?.meta?.semesters || []).filter(s => {
+    const year = String(s).slice(0, 3);
+    return (!start || year >= start) && (!end || year <= end);
+  });
+}
+
 function updatePrintChoiceState() {
   const selectedCount = getSelectedPrintItems().length;
   document.querySelectorAll('.print-choice').forEach(label => {
@@ -4184,6 +4246,7 @@ function updatePrintChoiceState() {
 function renderPrintPanel() {
   const container = document.getElementById('printSelections');
   if (!container) return;
+  populatePrintYearFilters();
   container.innerHTML = '';
   PRINT_ITEMS.forEach(item => {
     const label = document.createElement('label');
@@ -4242,6 +4305,47 @@ function withPrintablePanelsVisible(task) {
   }
 }
 
+function clonePrintDataForSemesters(sems) {
+  const semSet = new Set(sems);
+  const classSummary = Object.fromEntries(
+    Object.entries(DATA.class_summary || {}).filter(([, c]) => semSet.has(c.semester))
+  );
+  const students = Object.fromEntries(
+    Object.entries(DATA.students || {}).map(([sid, student]) => [
+      sid,
+      { ...student, records: (student.records || []).filter(r => semSet.has(r.semester)) }
+    ]).filter(([, student]) => student.records.length)
+  );
+  return {
+    ...DATA,
+    meta: { ...DATA.meta, semesters: sems },
+    class_summary: classSummary,
+    students,
+  };
+}
+
+function withPrintDataRange(task) {
+  if (!DATA) return task();
+  const sems = getPrintSemesters();
+  if (!sems.length) return task();
+  const originalData = DATA;
+  const controls = ['aFilterSem', 'aFilterSheet', 'aTrendSheet', 'aCompareSem'].map(id => {
+    const el = document.getElementById(id);
+    return { el, value: el?.value };
+  });
+  DATA = clonePrintDataForSemesters(sems);
+  const aSem = document.getElementById('aFilterSem');
+  if (aSem && !sems.includes(aSem.value)) aSem.value = sems[0];
+  try {
+    return task();
+  } finally {
+    DATA = originalData;
+    controls.forEach(({ el, value }) => {
+      if (el && value != null) el.value = value;
+    });
+  }
+}
+
 function renderPrintCharts() {
   if (!DATA) return;
   renderD();
@@ -4259,16 +4363,21 @@ function getPrintableSvgHtml(item) {
   const el = document.getElementById(item.id);
   if (!el) return '';
   const svg = el.tagName?.toLowerCase() === 'svg' ? el : el.querySelector('svg');
-  return svg ? svg.outerHTML : '';
+  if (!svg) return '';
+  const copy = svg.cloneNode(true);
+  copy.removeAttribute('width');
+  copy.removeAttribute('height');
+  copy.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  return copy.outerHTML;
 }
 
 function getPrintableItemHTML(item) {
-  const title = `<div style="font-size:12px;font-weight:600;color:#444;margin-bottom:8px">${escapeHtml(item.label)}</div>`;
+  const title = `<div class="print-card-title">${escapeHtml(item.label)}</div>`;
   const empty = `<div style="color:#777;font-size:12px;padding:18px 0">此項目目前沒有可列印圖表</div>`;
   if (item.type === 'svg') {
     const svgHtml = getPrintableSvgHtml(item);
     return title + (svgHtml
-      ? `<div style="width:100%;overflow:hidden">${svgHtml}</div>`
+      ? `<div class="print-figure">${svgHtml}</div>`
       : empty);
   }
   const canvas = document.getElementById(item.id);
@@ -4284,7 +4393,7 @@ function getPrintableItemHTML(item) {
       chart.render();
     }
     const dataUrl = canvas.toDataURL('image/png');
-    return title + `<img src="${dataUrl}" style="width:100%;height:auto;display:block" />`;
+    return title + `<div class="print-figure"><img src="${dataUrl}" alt="${escapeHtml(item.label)}" /></div>`;
   } catch(e) {
     return title + `<div style="color:#777;font-size:12px;padding:18px 0">圖表無法擷取</div>`;
   }
@@ -4292,21 +4401,34 @@ function getPrintableItemHTML(item) {
 
 function buildPrintHTML(items) {
   let itemHtml = '';
-  withPrintablePanelsVisible(() => {
-    renderPrintCharts();
-    itemHtml = items.map(item =>
-      `<div style="break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px">${getPrintableItemHTML(item)}</div>`
-    ).join('');
+  withPrintDataRange(() => {
+    withPrintablePanelsVisible(() => {
+      renderPrintCharts();
+      itemHtml = items.map(item =>
+        `<div class="print-card">${getPrintableItemHTML(item)}</div>`
+      ).join('');
+    });
   });
 
-  let html = `<div style="font-family:sans-serif;background:#fff;color:#000;padding:20px">
+  const range = getPrintYearRange();
+  const rangeLabel = range.start && range.end ? `${range.start} 年至 ${range.end} 年` : '全部年份';
+  let html = `<style>
+    .print-report { font-family:sans-serif;background:#fff;color:#000;padding:20px; }
+    .print-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start; }
+    .print-card { break-inside:avoid;border:1px solid #ddd;border-radius:8px;padding:12px;height:335px;display:flex;flex-direction:column;overflow:hidden;background:#fff; }
+    .print-card-title { font-size:12px;font-weight:600;color:#444;margin-bottom:8px;flex:0 0 auto; }
+    .print-figure { flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden; }
+    .print-figure img, .print-figure svg { width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;display:block; }
+    @media print { .print-card { page-break-inside:avoid; } }
+  </style><div class="print-report">
     <div style="border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:20px">
       <h1 style="font-size:18px;margin:0">學習分析儀表板</h1>`;
   const subj = document.getElementById('subjectInput')?.value?.trim();
   if (subj) html += `<div style="font-size:13px;color:#555;margin-top:4px">科目：${escapeHtml(subj)}</div>`;
+  html += `<div style="font-size:12px;color:#555;margin-top:4px">輸出年份：${escapeHtml(rangeLabel)}</div>`;
   const meta = document.getElementById('metaInfo')?.textContent;
   if (meta) html += `<div style="font-size:11px;color:#888;margin-top:2px">${escapeHtml(meta)}</div>`;
-  html += `</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px">`;
+  html += `</div><div class="print-grid">`;
   html += itemHtml;
   html += `</div></div>`;
   return html;
