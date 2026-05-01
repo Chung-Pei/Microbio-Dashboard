@@ -2410,7 +2410,7 @@ async function loadData() {
 function init() {
   const m = DATA.meta;
   document.getElementById('metaInfo').innerHTML =
-    `${m.total_students} 位學生 · ${m.semesters.length} 學期 · 更新 ${m.generated_at.slice(0,10)}`;
+    `${escapeHtml(String(m.total_students))} 位學生 · ${escapeHtml(String(m.semesters.length))} 學期 · 更新 ${escapeHtml(m.generated_at.slice(0,10))}`;
 
   const sems = m.semesters;
   if (sems.length > 0) {
@@ -3044,7 +3044,7 @@ function renderProfile(sid) {
 
   let html = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <div style="font-family:'Space Mono',monospace;font-size:20px;color:var(--text)">${data.name_masked}</div>
+      <div style="font-family:'Space Mono',monospace;font-size:20px;color:var(--text)">${escapeHtml(data.name_masked)}</div>
       ${isRetaker ? '<span class="tag tag-red">重修生 Retaker</span>' : ''}
       ${excCounts.red    ? `<span class="tag tag-red">🔴 ${excCounts.red} 重大違規</span>` : ''}
       ${excCounts.yellow ? `<span class="tag tag-yellow">🟡 ${excCounts.yellow} 態度異常</span>` : ''}
@@ -3065,7 +3065,7 @@ function renderProfile(sid) {
         <div class="tl-dot ${r.type}"></div>
         <div class="tl-header">
           <span class="tl-sem">${semLabel(r.semester)}</span>
-          <span class="tl-sheet">${r.sheet_name}</span>
+          <span class="tl-sheet">${escapeHtml(r.sheet_name)}</span>
           <span class="tl-type-badge tl-type-${r.type}">${typeLabel}</span>
           ${r.is_retaker && r.delta != null
             ? `<span class="tl-delta ${r.delta>=0?'pos':'neg'}">Δ ${r.delta>=0?'+':''}${r.delta}</span>`
@@ -4109,9 +4109,9 @@ function renderDTable(filtered) {
   tbody.innerHTML = rows.map((c, i) => `
     <tr style="background:${i%2?'var(--surface2)':'var(--surface)'}">
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${semLabel(c.semester)}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600">${c.sheet_name}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600">${escapeHtml(c.sheet_name)}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">
-        <span class="program-badge prog-${c.program.replace(/_/g,'-')}">${PROGRAM_LABELS[c.program]}</span>
+        <span class="program-badge prog-${escapeHtml(c.program.replace(/_/g,'-'))}">${escapeHtml(PROGRAM_LABELS[c.program] ?? c.program)}</span>
       </td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right">${c.count}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:'JetBrains Mono',monospace">${c.avg_midterm ?? '–'}</td>
@@ -4569,7 +4569,9 @@ function doPrint() {
     const a = document.createElement('a');
     a.href = url;
     a.download = '學習分析報表.html';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 }
