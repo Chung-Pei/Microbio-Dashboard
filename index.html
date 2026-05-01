@@ -2679,6 +2679,7 @@ function renderA() {
 }
 
 function renderTrend() {
+  if (!DATA) return;
   const sheetName = document.getElementById('aTrendSheet').value;
   const type = document.getElementById('aFilterType')?.value || 'all';
   const relevant = DATA.meta.semesters
@@ -3711,14 +3712,16 @@ function toggleTheme() {
   document.getElementById('themeToggle').textContent = isLight ? '🌞' : '🌙';
   localStorage.setItem('la-theme', isLight ? 'light' : 'dark');
   refreshChartDefaults();
+  if (!DATA) return;   // 資料尚未載入，無需重繪圖表
   const activeTab = document.querySelector('.tab.active');
   if (activeTab) {
     const tabs = [...document.querySelectorAll('.tab')];
-    const tabId = ['D','A','C','B'][tabs.indexOf(activeTab)];
+    const tabId = ['D','A','C','B','P'][tabs.indexOf(activeTab)];
     if (tabId === 'A') { renderA(); renderTrend(); }
     if (tabId === 'B') renderB();
     if (tabId === 'C') { renderAnomalyDensity(); renderRetakerFirstDist(); }
     if (tabId === 'D') renderD();
+    if (tabId === 'P') renderPrintPanel();
     // Re-attach chart title buttons after re-render
     requestAnimationFrame(() => {
       attachInfoButtons();
