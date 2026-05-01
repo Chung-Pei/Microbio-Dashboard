@@ -161,7 +161,11 @@ header {
   position: sticky;
   top: var(--header-h);
   z-index: 190;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.tab-bar::-webkit-scrollbar { display: none; }
 .tab {
   height: 40px;
   padding: 0 18px;
@@ -1086,7 +1090,7 @@ body.light .subject-input {
     <span>重修分析</span>
     <span class="tab-label">Retaker Analysis</span>
   </button>
-  <button class="tab" onclick="switchTab('P')" style="margin-left:auto">
+  <button class="tab" onclick="switchTab('P')">
     <span>🖨 列印</span>
     <span class="tab-label">Print</span>
   </button>
@@ -1616,9 +1620,9 @@ function refreshChartDefaults() {
   CHART_DEFAULTS.color = chartTextColor();
   CHART_DEFAULTS.plugins.tooltip = ts;
   CHART_DEFAULTS.plugins.legend.labels.color = chartTextDimColor();
-  CHART_DEFAULTS.scales.x.ticks.color = light ? '#6b748f' : '#6b748f';
+  CHART_DEFAULTS.scales.x.ticks.color = '#6b748f';
   CHART_DEFAULTS.scales.x.grid.color  = light ? '#e0e4f0' : '#1c2030';
-  CHART_DEFAULTS.scales.y.ticks.color = light ? '#6b748f' : '#6b748f';
+  CHART_DEFAULTS.scales.y.ticks.color = '#6b748f';
   CHART_DEFAULTS.scales.y.grid.color  = light ? '#e8eaf2' : '#242840';
 }
 
@@ -2299,6 +2303,27 @@ function classInfo(sheetName, semester = '') {
 function normalizeSheet(s) {
   return classInfo(s).canonical;
 }
+
+// 學制順序：二技一般 → 二技在職 → 二技夜間 → 四技一般 → 學士後護 → 重修班 → 重修生
+const PROGRAM_ORDER = ['2yr_gen','2yr_work','2yr_night','4yr','post','retake_class','retake_student'];
+const PROGRAM_LABELS = {
+  '2yr_gen':        '二技一般',
+  '2yr_work':       '二技在職',
+  '2yr_night':      '二技夜間',
+  '4yr':            '四技一般',
+  'post':           '學士後護',
+  'retake_class':   '重修班',
+  'retake_student': '重修生',
+};
+const PROGRAM_COLORS = {
+  '2yr_gen':        '#4f8ef7',
+  '2yr_work':       '#64d4a8',
+  '2yr_night':      '#f7a44f',
+  '4yr':            '#e06c8c',
+  'post':           '#be78f0',
+  'retake_class':   '#f0c85b',
+  'retake_student': '#a0b0c0',
+};
 
 function programOrderIndex(program) {
   const idx = PROGRAM_ORDER.indexOf(program);
@@ -3468,10 +3493,8 @@ function renderHeatmap(filtered) {
   filtered.forEach(c => {
     const cls = normalizeSheet(c.sheet_name);
     if (!cls) return;
-    const program = c.program || classifyProgram(c.sheet_name, c.semester);
-    const rowKey = `${program}__${c.type || ''}__${cls}`;
-    const key = `${c.semester}__${rowKey}`;
-    const rec = { ...c, sheet_name: cls, program, _heatRowKey: rowKey };
+    const key = `${c.semester}__${cls}`;
+    const rec = { ...c, sheet_name: cls };
     const prev = cellMap.get(key);
     if (!prev) {
       cellMap.set(key, rec);
@@ -3488,34 +3511,20 @@ function renderHeatmap(filtered) {
   });
 
   const heatRows = [...cellMap.values()];
-  const rowMap = new Map();
-  heatRows.forEach(c => {
-    if (!rowMap.has(c._heatRowKey)) rowMap.set(c._heatRowKey, c);
-  });
-  const rows = [...rowMap.values()].sort((a, b) =>
-    compareSheetNames(a.sheet_name, b.sheet_name)
-    || programOrderIndex(a.program) - programOrderIndex(b.program)
-    || (a.type || '').localeCompare(b.type || '')
-  );
-  if (!rows.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
-
-  const labelCounts = rows.reduce((acc, r) => {
-    acc[r.sheet_name] = (acc[r.sheet_name] || 0) + 1;
-    return acc;
-  }, {});
+  const classes = sortSheetNames([...new Set(heatRows.map(c=>c.sheet_name))]);
+  if (!classes.length) { wrap.innerHTML='<div class="empty-state">無資料</div>'; return; }
 
   const isDark = !document.body.classList.contains('light');
-  const cellW=56, cellH=32, labelW=110, headerH=30;
-  const W=labelW+sems.length*cellW, H=headerH+rows.length*cellH;
+  const cellW=56, cellH=32, labelW=90, headerH=30;
+  const W=labelW+sems.length*cellW, H=headerH+classes.length*cellH;
 
-  const HEATMAP_SCORE_MIN = 60;
-  const HEATMAP_SCORE_MAX = 90;
-  const clamp01 = v => Math.max(0, Math.min(1, v));
-  const lerp=(v,mn,mx)=>mx===mn?0.5:clamp01((v-mn)/(mx-mn));
+  const vals=heatRows.map(c=>c.avg_semester).filter(v=>v!=null);
+  const minV=vals.length ? Math.min(...vals) : 0, maxV=vals.length ? Math.max(...vals) : 100;
+  const lerp=(v,mn,mx)=>mx===mn?0.5:(v-mn)/(mx-mn);
 
   function scoreColor(v) {
     if(v==null) return isDark?'#1c2030':'#e0e4f0';
-    const t=lerp(v,HEATMAP_SCORE_MIN,HEATMAP_SCORE_MAX);
+    const t=lerp(v,minV,maxV);
     const r=Math.round(220*(1-t)+40*t), g=Math.round(80*(1-t)+200*t), b=Math.round(80*(1-t)+100*t);
     return `rgb(${r},${g},${b})`;
   }
@@ -3528,16 +3537,14 @@ function renderHeatmap(filtered) {
   sems.forEach((s,i)=>{
     svg+=`<text x="${labelW+i*cellW+cellW/2}" y="${headerH-8}" text-anchor="middle" fill="${dimCol}" font-size="9" font-family="monospace">${semLabel(s)}</text>`;
   });
-  rows.forEach((row,ri)=>{
-    const cls = row.sheet_name;
-    const label = labelCounts[cls] > 1 ? `${cls} ${PROGRAM_LABELS[row.program] || row.program}` : cls;
+  classes.forEach((cls,ri)=>{
     const y=headerH+ri*cellH;
-    svg+=`<text x="${labelW-6}" y="${y+cellH/2+4}" text-anchor="end" fill="${textCol}" font-size="10" font-family="sans-serif">${escapeHtml(label)}</text>`;
+    svg+=`<text x="${labelW-6}" y="${y+cellH/2+4}" text-anchor="end" fill="${textCol}" font-size="10" font-family="sans-serif">${cls}</text>`;
     sems.forEach((sem,ci)=>{
-      const rec=cellMap.get(`${sem}__${row._heatRowKey}`);
+      const rec=cellMap.get(`${sem}__${cls}`);
       const v=rec?.avg_semester;
       const fill=scoreColor(v);
-      const lum=v!=null?lerp(v,HEATMAP_SCORE_MIN,HEATMAP_SCORE_MAX):0.5;
+      const lum=v!=null?lerp(v,minV,maxV):0.5;
       const txtFill=lum>0.5?'#0a0c14':'#f0f4ff';
       // 將 tooltip 資料存入 data 屬性（escapeHtml 防止 attribute injection）
       const tipData = v!=null
@@ -3560,9 +3567,11 @@ function renderHeatmap(filtered) {
 }
 
 // D1: Box Plot（純 SVG）
-function renderBoxPlot(allClasses) {
+function renderBoxPlot(allClasses, filterProg) {
   const wrap=document.getElementById('boxplotWrap');
-  const programs=PROGRAM_ORDER;
+  const programs = filterProg === 'all'
+    ? PROGRAM_ORDER
+    : PROGRAM_ORDER.filter(p => p === filterProg);
 
   // 從 students 收集各學制的原始成績
   const progScores={};
@@ -3638,8 +3647,12 @@ function renderBoxPlot(allClasses) {
 }
 
 // D3: 人數 vs 及格率 相關性
-function renderCorrelation(allClasses) {
-  const pts=allClasses.filter(c=>c.count&&c.pass_rate!=null).map(c=>({
+function renderCorrelation(allClasses, filterProg) {
+  const pts=allClasses.filter(c => {
+    if (!c.count || c.pass_rate == null) return false;
+    if (filterProg !== 'all' && c.program !== filterProg) return false;
+    return true;
+  }).map(c=>({
     x:c.count, y:+(c.pass_rate*100).toFixed(1),
     prog:c.program, sem:c.semester, cls:c.sheet_name
   }));
@@ -3735,28 +3748,6 @@ function toggleTheme() {
 function classifyProgram(sheetName, semester) {
   return classInfo(sheetName, semester).program;
 }
-
-// 學制順序：二技一般 → 二技在職 → 二技夜間 → 四技一般 → 學士後護 → 重修班 → 重修生
-const PROGRAM_ORDER = ['2yr_gen','2yr_work','2yr_night','4yr','post','retake_class','retake_student'];
-
-const PROGRAM_LABELS = {
-  '2yr_gen':        '二技一般',
-  '2yr_work':       '二技在職',
-  '2yr_night':      '二技夜間',
-  '4yr':            '四技一般',
-  'post':           '學士後護',
-  'retake_class':   '重修班',
-  'retake_student': '重修生',
-};
-const PROGRAM_COLORS = {
-  '2yr_gen':        '#4f8ef7',
-  '2yr_work':       '#64d4a8',
-  '2yr_night':      '#f7a44f',
-  '4yr':            '#e06c8c',
-  'post':           '#be78f0',
-  'retake_class':   '#f0c85b',
-  'retake_student': '#a0b0c0',
-};
 
 // ══════════════════════════════════════════════════════════
 // PANEL D — 整屆比較 Cohort Analysis
@@ -3891,8 +3882,8 @@ function renderD() {
 
   // ── D1/D2/D3 新增圖表 ──
   renderHeatmap(filtered);
-  renderBoxPlot(allClasses);
-  renderCorrelation(allClasses);
+  renderBoxPlot(allClasses, filterProg);
+  renderCorrelation(allClasses, filterProg);
 }
 
 function renderDTrendMerge(filtered, sems) {
@@ -4065,7 +4056,9 @@ function renderDProgramBar(allClasses, sems, filterProg) {
 }
 
 function renderDPassRate(allClasses, sems, filterProg) {
-  const programs = PROGRAM_ORDER;
+  const programs = filterProg === 'all'
+    ? PROGRAM_ORDER
+    : PROGRAM_ORDER.filter(p => p === filterProg);
   const datasets = programs.map(prog => {
     const data = sems.map(sem => {
       const cls = allClasses.filter(c => c.semester === sem && c.program === prog);
