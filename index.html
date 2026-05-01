@@ -3573,14 +3573,14 @@ function renderBoxPlot(allClasses, filterProg) {
     ? PROGRAM_ORDER
     : PROGRAM_ORDER.filter(p => p === filterProg);
 
-  // 從 students 收集各學制的原始成績
+  // 從 allClasses（已套用 dType 過濾）收集各學制成績，與其他圖表資料來源一致
   const progScores={};
   programs.forEach(p=>progScores[p]=[]);
-  Object.values(DATA.students).forEach(s=>s.records.forEach(r=>{
-    if(r.type==='practicum'||r.semester_score==null) return;
-    const p=classifyProgram(r.sheet_name,r.semester);
-    progScores[p].push(r.semester_score);
-  }));
+  allClasses.forEach(c => {
+    if (!programs.includes(c.program)) return;
+    if (c.avg_semester == null) return;
+    progScores[c.program].push(c.avg_semester);
+  });
 
   const isDark=!document.body.classList.contains('light');
   const W=Math.max(300,programs.length*90+60), H=240;
@@ -3647,12 +3647,8 @@ function renderBoxPlot(allClasses, filterProg) {
 }
 
 // D3: 人數 vs 及格率 相關性
-function renderCorrelation(allClasses, filterProg) {
-  const pts=allClasses.filter(c => {
-    if (!c.count || c.pass_rate == null) return false;
-    if (filterProg !== 'all' && c.program !== filterProg) return false;
-    return true;
-  }).map(c=>({
+function renderCorrelation(filtered) {
+  const pts=filtered.filter(c=>c.count&&c.pass_rate!=null).map(c=>({
     x:c.count, y:+(c.pass_rate*100).toFixed(1),
     prog:c.program, sem:c.semester, cls:c.sheet_name
   }));
@@ -3883,7 +3879,7 @@ function renderD() {
   // ── D1/D2/D3 新增圖表 ──
   renderHeatmap(filtered);
   renderBoxPlot(allClasses, filterProg);
-  renderCorrelation(allClasses, filterProg);
+  renderCorrelation(filtered);
 }
 
 function renderDTrendMerge(filtered, sems) {
